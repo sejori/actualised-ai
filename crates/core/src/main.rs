@@ -7,8 +7,9 @@ async fn main() {
     dotenvy::dotenv().ok();
     println!("Starting Actualised.ai Code-First MVP (Rust Native)...");
     
-    let mut state = CompanyState::new();
     let state_dir = "./local_state";
+    let db_path = "./local_state/actualised.db";
+    let mut state = CompanyState::init(db_path).await.expect("Failed to init SurrealDB");
 
     // 2. Define the Team Graph
     state.add_agent(Agent {
@@ -16,21 +17,21 @@ async fn main() {
         name: "Engineering Lead".to_string(),
         role: "Manage architecture and break down tasks.".to_string(),
         parent_id: None,
-    });
+    }).await.unwrap();
     
     state.add_agent(Agent {
         id: "node_2_backend".to_string(),
         name: "Backend Dev".to_string(),
         role: "Write Rust APIs.".to_string(),
         parent_id: Some("node_1_engineering".to_string()),
-    });
+    }).await.unwrap();
 
     // 3. Define Initial Project
     state.add_project(Project {
         id: "proj_1".to_string(),
         title: "V1 Launch".to_string(),
         description: "Design the database schema and build the initial API.".to_string(),
-    });
+    }).await.unwrap();
 
     println!("Starting engine... (Setting up memory directories and starting DFS loop)");
     
