@@ -1,0 +1,17 @@
+{
+  "name": "@actualised-ai/sdk",
+  "version": "0.1.0",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "actualised_sdk"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0",
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform"
+  }
+}

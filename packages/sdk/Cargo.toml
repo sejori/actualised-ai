@@ -1,0 +1,16 @@
+[package]
+name = "actualised-sdk"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2.16.0", default-features = false, features = ["napi4", "tokio_rt"] }
+napi-derive = "2.16.0"
+actualised-core = { path = "../../crates/core" }
+tokio = { version = "1", features = ["full"] }
+
+[build-dependencies]
+napi-build = "2.1.3"
