@@ -11,8 +11,10 @@ export class OrchestratorWasm {
     configure_rate_limits(config_json: any): void;
     get_agent_context(agent_id: string): any;
     get_agent_memories(agent_id: string): any;
+    get_agent_memory_tree(agent_id: string): any;
     get_agents(): any;
     get_projects(): any;
+    get_shared_tree(): any;
     static init(): Promise<OrchestratorWasm>;
     run_orchestrator(): Promise<void>;
     send_agent_message(agent_id: string, message: string): void;
@@ -29,8 +31,10 @@ export interface InitOutput {
     readonly orchestratorwasm_configure_rate_limits: (a: number, b: any) => [number, number];
     readonly orchestratorwasm_get_agent_context: (a: number, b: number, c: number) => [number, number, number];
     readonly orchestratorwasm_get_agent_memories: (a: number, b: number, c: number) => [number, number, number];
+    readonly orchestratorwasm_get_agent_memory_tree: (a: number, b: number, c: number) => [number, number, number];
     readonly orchestratorwasm_get_agents: (a: number) => [number, number, number];
     readonly orchestratorwasm_get_projects: (a: number) => [number, number, number];
+    readonly orchestratorwasm_get_shared_tree: (a: number) => [number, number, number];
     readonly orchestratorwasm_init: () => any;
     readonly orchestratorwasm_run_orchestrator: (a: number) => any;
     readonly orchestratorwasm_send_agent_message: (a: number, b: number, c: number, d: number, e: number) => void;

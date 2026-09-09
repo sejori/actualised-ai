@@ -103,6 +103,18 @@ impl OrchestratorWasm {
     }
 
     #[wasm_bindgen]
+    pub fn get_agent_memory_tree(&self, agent_id: &str) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.get_agent_memory_tree(agent_id))
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    }
+
+    #[wasm_bindgen]
+    pub fn get_shared_tree(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.get_shared_tree())
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    }
+
+    #[wasm_bindgen]
     pub fn get_agent_context(&self, agent_id: &str) -> Result<JsValue, JsValue> {
         serde_wasm_bindgen::to_value(&self.inner.get_agent_context(agent_id))
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))

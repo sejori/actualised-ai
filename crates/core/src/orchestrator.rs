@@ -6,14 +6,32 @@ use petgraph::graph::DiGraph;
 use std::collections::HashMap;
 
 const DEFAULT_USER_PROMPT: &str = "What actions will you take on your assigned tasks?";
+/// How many past turns to keep per agent so the context view doesn't grow unbounded.
+const MAX_HISTORY_TURNS: usize = 40;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConversationTurn {
+    /// "operator" for messages queued via the UI, "agent" for inference responses.
+    pub role: String,
+    pub content: String,
+}
 
 /// The rolling conversational state the UI can inspect for a single agent.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AgentContext {
     /// Operator messages queued via the UI, to be folded into the agent's next turn.
     pub pending_messages: Vec<String>,
-    pub last_user_prompt: Option<String>,
-    pub last_response: Option<String>,
+    pub history: Vec<ConversationTurn>,
+}
+
+impl AgentContext {
+    fn push_turn(&mut self, role: &str, content: String) {
+        self.history.push(ConversationTurn { role: role.to_string(), content });
+        if self.history.len() > MAX_HISTORY_TURNS {
+            let overflow = self.history.len() - MAX_HISTORY_TURNS;
+            self.history.drain(0..overflow);
+        }
+    }
 }
 
 pub struct Orchestrator {
@@ -54,6 +72,14 @@ impl Orchestrator {
         self.agent_contexts.get(agent_id).cloned().unwrap_or_default()
     }
 
+    pub fn get_agent_memory_tree(&self, agent_id: &str) -> Vec<crate::memory::MemoryNode> {
+        self.memory.read_memory_tree(agent_id)
+    }
+
+    pub fn get_shared_tree(&self) -> Vec<crate::memory::MemoryNode> {
+        self.memory.read_shared_tree()
+    }
+
     pub async fn run(&mut self) {
         println!("Orchestrator staging work to inference queue...");
         
@@ -85,7 +111,7 @@ impl Orchestrator {
                 } else if t == "write_memory" {
                     defined_tools.push(Tool {
                         name: "write_memory".to_string(),
-                        description: "Write content to your local memory footprint".to_string(),
+                        description: "Write content to your own memory footprint. Use '/' in file_name to organise files into folders (e.g. 'research/competitors.md').".to_string(),
                         parameters: serde_json::json!({
                             "type": "object",
                             "properties": {
@@ -93,6 +119,19 @@ impl Orchestrator {
                                 "content": { "type": "string" }
                             },
                             "required": ["file_name", "content"]
+                        }),
+                    });
+                } else if t == "write_shared_file" {
+                    defined_tools.push(Tool {
+                        name: "write_shared_file".to_string(),
+                        description: "Write a file into the shared team directory, visible to every agent in the company. Use '/' in path to organise into folders (e.g. 'engineering/api-spec.md').".to_string(),
+                        parameters: serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "path": { "type": "string" },
+                                "content": { "type": "string" }
+                            },
+                            "required": ["path", "content"]
                         }),
                     });
                 }
@@ -105,7 +144,9 @@ impl Orchestrator {
             } else {
                 format!("{}\n\nOperator messages for this turn:\n{}", DEFAULT_USER_PROMPT, pending.iter().map(|m| format!("- {}", m)).collect::<Vec<_>>().join("\n"))
             };
-            context.last_user_prompt = Some(user_prompt.clone());
+            for message in &pending {
+                context.push_turn("operator", message.clone());
+            }
 
             requests.push(InferenceRequest {
                 agent_id: agent.id.clone(),
@@ -133,11 +174,11 @@ impl Orchestrator {
                     match &res.result {
                         InferenceResult::Text(text) => {
                             println!("Agent {} Response (Text): {}", agent_id, text);
-                            self.agent_contexts.entry(agent_id.clone()).or_default().last_response = Some(text.clone());
+                            self.agent_contexts.entry(agent_id.clone()).or_default().push_turn("agent", text.clone());
                         }
                         InferenceResult::ToolCalls(calls) => {
-                            self.agent_contexts.entry(agent_id.clone()).or_default().last_response =
-                                Some(format!("Called tools: {}", calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", ")));
+                            let summary = format!("Called tools: {}", calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
+                            self.agent_contexts.entry(agent_id.clone()).or_default().push_turn("agent", summary);
                             for call in calls {
                                 println!("Agent {} called tool: {}", agent_id, call.name);
                                 if call.name == "create_sub_project" {
@@ -161,6 +202,14 @@ impl Orchestrator {
                                     } else {
                                         println!("Successfully wrote memory file: {}", file_name);
                                     }
+                                } else if call.name == "write_shared_file" {
+                                    let path = call.args["path"].as_str().unwrap_or("output.txt");
+                                    let content = call.args["content"].as_str().unwrap_or_default();
+                                    if let Err(e) = self.memory.write_shared(path, content) {
+                                        println!("Failed to write shared file: {}", e);
+                                    } else {
+                                        println!("Successfully wrote shared file: {}", path);
+                                    }
                                 }
                             }
                         }
@@ -168,7 +217,7 @@ impl Orchestrator {
                 }
                 Err(e) => {
                     println!("Inference Error for Agent {}: {}", agent_id, e);
-                    self.agent_contexts.entry(agent_id.clone()).or_default().last_response = Some(format!("Error: {}", e));
+                    self.agent_contexts.entry(agent_id.clone()).or_default().push_turn("agent", format!("Error: {}", e));
                 }
             }
         }

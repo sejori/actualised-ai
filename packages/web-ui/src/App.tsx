@@ -10,8 +10,12 @@ type Project = { id: string; title: string; description: string };
 type HoverPosition = { x: number; y: number };
 type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string };
 type RateLimitSettings = { maxConcurrentRequests: number; requestsPerSecond: number };
-type MemoryFile = { file_name: string; content: string };
-type AgentContext = { pending_messages: string[]; last_user_prompt: string | null; last_response: string | null };
+type ConversationTurn = { role: 'operator' | 'agent'; content: string };
+type AgentContext = { pending_messages: string[]; history: ConversationTurn[] };
+type MemoryNode =
+  | { kind: 'folder'; name: string; children: MemoryNode[] }
+  | { kind: 'file'; name: string; path: string; content: string };
+type ViewedFile = { path: string; content: string };
 
 const INFERENCE_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', models: ['gemini-3.6-flash', 'gemini-3.6-pro'], disabled: false },
@@ -51,6 +55,23 @@ function graphElements(agents: Agent[]): ElementDefinition[] {
   ];
 }
 
+/// Recursive folder/file tree renderer for agent memories and the shared team directory,
+/// using native <details>/<summary> so expand/collapse and keyboard navigation come for free.
+const MemoryTreeView: Component<{ nodes: MemoryNode[]; onOpenFile: (file: ViewedFile) => void }> = (props) => (
+  <ul class="memory-tree">
+    <For each={props.nodes}>
+      {(node) => <li>
+        {node.kind === 'folder'
+          ? <details open>
+              <summary>{node.name}</summary>
+              <MemoryTreeView nodes={node.children} onOpenFile={props.onOpenFile} />
+            </details>
+          : <button type="button" class="memory-leaf" onClick={() => props.onOpenFile({ path: node.path, content: node.content })}>{node.name}</button>}
+      </li>}
+    </For>
+  </ul>
+);
+
 const Dashboard: Component = () => {
   let cyContainer!: HTMLDivElement;
   let cy: Core | undefined;
@@ -72,6 +93,8 @@ const Dashboard: Component = () => {
   };
   let inspectorRef: HTMLElement | undefined;
   let settingsRef: HTMLElement | undefined;
+  let sharedRef: HTMLElement | undefined;
+  let chatScrollRef: HTMLDivElement | undefined;
   let lastFocusedNodeButton: HTMLElement | undefined;
   const [agents, setAgents] = createSignal<Agent[]>([]);
   const [projects, setProjects] = createSignal<Project[]>([]);
@@ -80,12 +103,15 @@ const Dashboard: Component = () => {
   const [hoverPosition, setHoverPosition] = createSignal<HoverPosition>({ x: 0, y: 0 });
   const [isInspectorOpen, setIsInspectorOpen] = createSignal(false);
   const [isSettingsOpen, setIsSettingsOpen] = createSignal(false);
+  const [isSharedOpen, setIsSharedOpen] = createSignal(false);
   const [inferenceSettings, setInferenceSettings] = createSignal<InferenceSettings>(loadStoredSettings());
   const [draftSettings, setDraftSettings] = createSignal<InferenceSettings>(inferenceSettings());
   const [rateLimitSettings, setRateLimitSettings] = createSignal<RateLimitSettings>(loadStoredRateLimits());
   const [draftRateLimit, setDraftRateLimit] = createSignal<RateLimitSettings>(rateLimitSettings());
   const [isOrchestratorRunning, setIsOrchestratorRunning] = createSignal(false);
-  const [agentMemories, setAgentMemories] = createSignal<MemoryFile[]>([]);
+  const [agentMemoryTree, setAgentMemoryTree] = createSignal<MemoryNode[]>([]);
+  const [sharedTree, setSharedTree] = createSignal<MemoryNode[]>([]);
+  const [viewedMemory, setViewedMemory] = createSignal<ViewedFile>();
   const [agentContext, setAgentContext] = createSignal<AgentContext>();
   const [messageDraft, setMessageDraft] = createSignal('');
   const [error, setError] = createSignal<string>();
@@ -109,14 +135,27 @@ const Dashboard: Component = () => {
   const refreshAgentDetails = async (agentId: string) => {
     if (!orchestrator) return;
     try {
-      const [memories, context] = await Promise.all([
-        callOrchestrator((o) => o.get_agent_memories(agentId) as MemoryFile[]),
+      const [tree, context] = await Promise.all([
+        callOrchestrator((o) => o.get_agent_memory_tree(agentId) as MemoryNode[]),
         callOrchestrator((o) => o.get_agent_context(agentId) as AgentContext),
       ]);
-      setAgentMemories(memories);
+      setAgentMemoryTree(tree);
       setAgentContext(context);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to load agent details');
+    }
+  };
+
+  const openSharedDirectory = async () => {
+    setIsInspectorOpen(false);
+    setIsSettingsOpen(false);
+    setViewedMemory(undefined);
+    setIsSharedOpen(true);
+    if (!orchestrator) return;
+    try {
+      setSharedTree(await callOrchestrator((o) => o.get_shared_tree() as MemoryNode[]));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to load the shared directory');
     }
   };
 
@@ -130,6 +169,7 @@ const Dashboard: Component = () => {
 
   const openSettings = () => {
     setIsInspectorOpen(false);
+    setIsSharedOpen(false);
     setDraftSettings(inferenceSettings());
     setDraftRateLimit(rateLimitSettings());
     setIsSettingsOpen(true);
@@ -164,9 +204,11 @@ const Dashboard: Component = () => {
 
   const selectAgent = (agent: Agent, openInspector = true) => {
     setIsSettingsOpen(false);
+    setIsSharedOpen(false);
     setSelectedAgent(agent);
     setIsInspectorOpen(openInspector);
     setMessageDraft('');
+    setViewedMemory(undefined);
     void refreshAgentDetails(agent.id);
     cy?.nodes('.selected').removeClass('selected');
     const node = cy?.$id(agent.id);
@@ -185,7 +227,9 @@ const Dashboard: Component = () => {
 
   const handleKeydown = (event: KeyboardEvent) => {
     if (event.key !== 'Escape') return;
-    if (isSettingsOpen()) setIsSettingsOpen(false);
+    if (viewedMemory()) setViewedMemory(undefined);
+    else if (isSharedOpen()) setIsSharedOpen(false);
+    else if (isSettingsOpen()) setIsSettingsOpen(false);
     else if (isInspectorOpen()) setIsInspectorOpen(false);
   };
   window.addEventListener('keydown', handleKeydown);
@@ -207,6 +251,7 @@ const Dashboard: Component = () => {
   };
   const trapInspectorTab = (event: KeyboardEvent) => trapTabWithin(inspectorRef)(event);
   const trapSettingsTab = (event: KeyboardEvent) => trapTabWithin(settingsRef)(event);
+  const trapSharedTab = (event: KeyboardEvent) => trapTabWithin(sharedRef)(event);
 
   createEffect(
     () => isInspectorOpen(),
@@ -227,6 +272,33 @@ const Dashboard: Component = () => {
       } else {
         lastFocusedNodeButton?.focus();
       }
+    },
+  );
+
+  createEffect(
+    () => isSharedOpen(),
+    (open) => {
+      if (open) {
+        sharedRef?.querySelector<HTMLElement>('.memory-leaf, summary, .close-button')?.focus();
+      } else {
+        lastFocusedNodeButton?.focus();
+      }
+    },
+  );
+
+  createEffect(
+    () => viewedMemory(),
+    (file) => {
+      if (!file) {
+        inspectorRef?.querySelector<HTMLElement>('.memory-leaf, summary')?.focus();
+      }
+    },
+  );
+
+  createEffect(
+    () => agentContext()?.history.length,
+    () => {
+      if (chatScrollRef) chatScrollRef.scrollTop = chatScrollRef.scrollHeight;
     },
   );
 
@@ -293,6 +365,7 @@ const Dashboard: Component = () => {
           disabled={isOrchestratorRunning()}
           onClick={runOrchestratorCycle}
         >{isOrchestratorRunning() ? '⏸' : '▶'}</button>
+        <button type="button" class="icon-button" aria-label="Shared team directory" onClick={openSharedDirectory}>🗂</button>
         <button type="button" class="icon-button" aria-label="Inference settings" onClick={openSettings}>⚙</button>
         <button class="secondary-button" onClick={() => cy?.fit(undefined, 60)}>Centre canvas</button>
       </div>
@@ -327,41 +400,72 @@ const Dashboard: Component = () => {
         <div class="inspector-section"><h3>Tools</h3><div class="tool-list"><For each={agent().tools}>{(tool) => <span>{tool}</span>}</For></div></div>
         <Show when={!agent().parent_id}><div class="inspector-section"><h3>Root projects</h3><ul class="project-list"><For each={projects()}>{(project) => <li><strong>{project.title}</strong><span>{project.description}</span></li>}</For></ul></div></Show>
 
-        <div class="inspector-section">
-          <h3>Memories</h3>
-          <Show when={agentMemories().length > 0} fallback={<p class="empty-hint">No memory files written yet.</p>}>
-            <ul class="memory-list">
-              <For each={agentMemories()}>{(file) => <li><strong>{file.file_name}</strong><pre>{file.content}</pre></li>}</For>
-            </ul>
-          </Show>
-        </div>
+        <Show
+          when={viewedMemory()}
+          fallback={<>
+            <div class="inspector-section">
+              <h3>Memories</h3>
+              <Show when={agentMemoryTree().length > 0} fallback={<p class="empty-hint">No memory files written yet.</p>}>
+                <MemoryTreeView nodes={agentMemoryTree()} onOpenFile={setViewedMemory} />
+              </Show>
+            </div>
 
-        <div class="inspector-section">
-          <h3>Inference context</h3>
-          <Show when={agentContext()?.last_user_prompt} fallback={<p class="empty-hint">No turns run yet.</p>}>
-            <p class="context-label">Last prompt sent</p><p class="context-value">{agentContext()?.last_user_prompt}</p>
-            <p class="context-label">Last response</p><p class="context-value">{agentContext()?.last_response ?? '—'}</p>
-          </Show>
-          <Show when={(agentContext()?.pending_messages.length ?? 0) > 0}>
-            <p class="context-label">Queued for next turn</p>
-            <ul class="pending-list"><For each={agentContext()?.pending_messages}>{(message) => <li>{message}</li>}</For></ul>
-          </Show>
-          <form
-            class="message-form"
-            onSubmit={(event) => { event.preventDefault(); sendAgentMessage(agent().id); }}
-          >
-            <label for="agent-message">Send a message into this agent's next turn</label>
-            <textarea
-              id="agent-message"
-              rows="3"
-              placeholder="e.g. Prioritise the onboarding bug before anything else"
-              value={messageDraft()}
-              onInput={(event) => setMessageDraft(event.currentTarget.value)}
-            />
-            <button type="submit" class="secondary-button" disabled={!messageDraft().trim()}>Queue message</button>
-          </form>
-        </div>
+            <div class="inspector-section">
+              <h3>Inference context</h3>
+              <Show when={(agentContext()?.history.length ?? 0) > 0} fallback={<p class="empty-hint">No turns run yet.</p>}>
+                <div class="chat-scroll" ref={chatScrollRef}>
+                  <For each={agentContext()?.history}>
+                    {(turn) => <div class={`chat-bubble chat-${turn.role}`}><span class="chat-role">{turn.role === 'operator' ? 'Operator' : agent().name}</span><p>{turn.content}</p></div>}
+                  </For>
+                </div>
+              </Show>
+              <Show when={(agentContext()?.pending_messages.length ?? 0) > 0}>
+                <p class="context-label">Queued for next turn</p>
+                <ul class="pending-list"><For each={agentContext()?.pending_messages}>{(message) => <li>{message}</li>}</For></ul>
+              </Show>
+              <form
+                class="message-form"
+                onSubmit={(event) => { event.preventDefault(); sendAgentMessage(agent().id); }}
+              >
+                <label for="agent-message">Send a message into this agent's next turn</label>
+                <textarea
+                  id="agent-message"
+                  rows="3"
+                  placeholder="e.g. Prioritise the onboarding bug before anything else"
+                  value={messageDraft()}
+                  onInput={(event) => setMessageDraft(event.currentTarget.value)}
+                />
+                <button type="submit" class="secondary-button" disabled={!messageDraft().trim()}>Queue message</button>
+              </form>
+            </div>
+          </>}
+        >
+          {(file) => <div class="inspector-section memory-viewer">
+            <button type="button" class="secondary-button back-button" onClick={() => setViewedMemory(undefined)}>← Back to {agent().name}</button>
+            <h3>{file().path}</h3>
+            <pre class="memory-viewer-content">{file().content}</pre>
+          </div>}
+        </Show>
       </aside>}
+    </Show>
+
+    <Show when={isSharedOpen()}>
+      <aside ref={sharedRef} class="settings-popover shared-popover" aria-label="Shared team directory" onKeyDown={trapSharedTab}>
+        <div class="inspector-nav">
+          <p class="eyebrow">Shared team directory</p>
+          <button class="icon-button close-button" aria-label="Close shared directory" onClick={() => { setIsSharedOpen(false); setViewedMemory(undefined); }}>×</button>
+        </div>
+        <Show when={sharedTree().length > 0} fallback={<p class="empty-hint">No shared files written yet.</p>}>
+          <MemoryTreeView nodes={sharedTree()} onOpenFile={(file) => setViewedMemory(file)} />
+        </Show>
+        <Show when={viewedMemory()}>
+          {(file) => <div class="memory-viewer">
+            <button type="button" class="secondary-button back-button" onClick={() => setViewedMemory(undefined)}>← Back to file list</button>
+            <h3>{file().path}</h3>
+            <pre class="memory-viewer-content">{file().content}</pre>
+          </div>}
+        </Show>
+      </aside>
     </Show>
 
     <Show when={isSettingsOpen()}>
