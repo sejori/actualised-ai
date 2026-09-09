@@ -1,6 +1,6 @@
 #![deny(clippy::all)]
 use napi_derive::napi;
-use actualised_core::state::{Agent, CompanyState, Project, SharedFile};
+use actualised_core::state::{Agent, CompanyState};
 use actualised_core::inference::Tool;
 use actualised_core::orchestrator::Orchestrator;
 use actualised_core::memory::MemoryManager;
@@ -86,6 +86,22 @@ impl Company {
     pub async fn get_tools(&self) -> napi::Result<String> {
         serde_json::to_string(&self.state.lock().await.tools)
             .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn queue_message(&self, agent_id: String, message: String) -> napi::Result<()> {
+        let mut state = self.state.lock().await;
+        if let Some(agent) = state.agents.iter().find(|a| a.id == agent_id).cloned() {
+            let mut updated_agent = agent.clone();
+            let mut pending = updated_agent.pending_messages.unwrap_or_default();
+            pending.push(message);
+            updated_agent.pending_messages = Some(pending);
+            state.update_agent(&agent_id, updated_agent).await
+                .map_err(|e| napi::Error::from_reason(e))?;
+            Ok(())
+        } else {
+            Err(napi::Error::from_reason("Agent not found".to_string()))
+        }
     }
 
     #[napi]

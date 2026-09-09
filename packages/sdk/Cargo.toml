@@ -11,6 +11,7 @@ napi = { version = "2.16.0", default-features = false, features = ["napi4", "tok
 napi-derive = "2.16.0"
 actualised-core = { path = "../../crates/core" }
 tokio = { version = "1", features = ["full"] }
+serde_json = "1.0"
 
 [build-dependencies]
 napi-build = "2.1.3"

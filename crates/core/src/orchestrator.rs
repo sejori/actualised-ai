@@ -1,5 +1,5 @@
 use crate::state::{CompanyState, Project};
-use crate::inference::{InferenceEngine, MockInferenceEngine, Tool, InferenceResult};
+use crate::inference::{InferenceEngine, MockInferenceEngine, InferenceResult};
 use crate::memory::MemoryManager;
 use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
 use petgraph::graph::DiGraph;
@@ -16,11 +16,8 @@ pub struct ConversationTurn {
     pub content: String,
 }
 
-/// The rolling conversational state the UI can inspect for a single agent.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AgentContext {
-    /// Operator messages queued via the UI, to be folded into the agent's next turn.
-    pub pending_messages: Vec<String>,
     pub history: Vec<ConversationTurn>,
 }
 
@@ -64,8 +61,17 @@ impl Orchestrator {
     }
 
     /// Queues an operator message to be appended to an agent's prompt on its next turn.
-    pub fn queue_message(&mut self, agent_id: &str, message: String) {
-        self.agent_contexts.entry(agent_id.to_string()).or_default().pending_messages.push(message);
+    pub async fn queue_message(&mut self, agent_id: &str, message: String) -> Result<(), String> {
+        if let Some(agent) = self.state.agents.iter().find(|a| a.id == agent_id).cloned() {
+            let mut updated_agent = agent.clone();
+            let mut pending = updated_agent.pending_messages.unwrap_or_default();
+            pending.push(message);
+            updated_agent.pending_messages = Some(pending);
+            self.state.update_agent(agent_id, updated_agent).await?;
+            Ok(())
+        } else {
+            Err("Agent not found".to_string())
+        }
     }
 
     pub fn get_agent_context(&self, agent_id: &str) -> AgentContext {
@@ -85,7 +91,7 @@ impl Orchestrator {
         
         // Take the configured inference engine
         let engine = std::mem::replace(&mut self.inference, Box::new(MockInferenceEngine));
-        let queue = InferenceQueue::new(engine, self.rate_limit);
+        let queue = InferenceQueue::new(engine, self.rate_limit.clone());
         
         let agents = self.state.agents.clone();
         let mut requests = Vec::new();
@@ -100,15 +106,46 @@ impl Orchestrator {
                 }
             }
 
-            let context = self.agent_contexts.entry(agent.id.clone()).or_default();
-            let pending = std::mem::take(&mut context.pending_messages);
-            let user_prompt = if pending.is_empty() {
+            let pending = agent.pending_messages.clone().unwrap_or_default();
+            
+            // Prioritize overdue scheduled tasks
+            let mut overdue_tasks = Vec::new();
+            if let Some(tasks) = &agent.scheduled_tasks {
+                for task in tasks {
+                    if !task.completed {
+                        if let Ok(due) = chrono::DateTime::parse_from_rfc3339(&task.due_date) {
+                            if chrono::Utc::now() > due.with_timezone(&chrono::Utc) {
+                                overdue_tasks.push(task.description.clone());
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut prompt_parts = Vec::new();
+            if !overdue_tasks.is_empty() {
+                prompt_parts.push(format!("URGENT: You have the following scheduled tasks that are OVERDUE and must be prioritized:\n{}", overdue_tasks.join("\n")));
+            }
+            if !pending.is_empty() {
+                prompt_parts.push(format!("Operator messages for this turn:\n{}", pending.iter().map(|m| format!("- {}", m)).collect::<Vec<_>>().join("\n")));
+            }
+            
+            let user_prompt = if prompt_parts.is_empty() {
                 DEFAULT_USER_PROMPT.to_string()
             } else {
-                format!("{}\n\nOperator messages for this turn:\n{}", DEFAULT_USER_PROMPT, pending.iter().map(|m| format!("- {}", m)).collect::<Vec<_>>().join("\n"))
+                format!("{}\n\n{}", prompt_parts.join("\n\n"), DEFAULT_USER_PROMPT)
             };
+
+            let context = self.agent_contexts.entry(agent.id.clone()).or_default();
             for message in &pending {
                 context.push_turn("operator", message.clone());
+            }
+
+            // Clear pending messages from state
+            if !pending.is_empty() {
+                let mut updated_agent = agent.clone();
+                updated_agent.pending_messages = Some(Vec::new());
+                let _ = self.state.update_agent(&agent.id, updated_agent).await;
             }
 
             requests.push(InferenceRequest {
@@ -134,6 +171,18 @@ impl Orchestrator {
         for (agent_id, response) in responses {
             match response {
                 Ok(res) => {
+                    // Update telemetry
+                    if let Some(agent) = self.state.agents.iter().find(|a| a.id == agent_id).cloned() {
+                        let mut updated_agent = agent.clone();
+                        let mut tel = updated_agent.telemetry.unwrap_or_default();
+                        tel.prompt_tokens += res.stats.prompt_tokens;
+                        tel.completion_tokens += res.stats.completion_tokens;
+                        tel.total_tokens += res.stats.total_tokens;
+                        tel.turns_taken += 1;
+                        updated_agent.telemetry = Some(tel);
+                        let _ = self.state.update_agent(&agent_id, updated_agent).await;
+                    }
+
                     match &res.result {
                         InferenceResult::Text(text) => {
                             println!("Agent {} Response (Text): {}", agent_id, text);

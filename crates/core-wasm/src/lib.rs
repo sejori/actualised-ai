@@ -192,7 +192,8 @@ impl OrchestratorWasm {
     }
 
     #[wasm_bindgen]
-    pub fn send_agent_message(&mut self, agent_id: &str, message: String) {
-        self.inner.queue_message(agent_id, message);
+    pub async fn send_agent_message(&mut self, agent_id: String, message: String) -> Result<(), JsValue> {
+        self.inner.queue_message(&agent_id, message).await.map_err(|e| JsValue::from_str(&e))?;
+        Ok(())
     }
 }
