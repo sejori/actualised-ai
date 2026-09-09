@@ -5,7 +5,8 @@ import type { Core, ElementDefinition } from 'cytoscape';
 import initWasm, { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
 import './App.css';
 
-type Agent = { id: string; name: string; role: string; parent_id: string | null; system_prompt: string; tools: string[] };
+type ScheduledTask = { id: string; description: string; due_date: string; completed: boolean };
+type Agent = { id: string; name: string; role: string; parent_id: string | null; system_prompt: string; tools: string[]; scheduled_tasks?: ScheduledTask[] };
 type Project = { id: string; title: string; description: string };
 type Tool = { name: string; description: string; parameters: any };
 type SharedFile = { id: string; name: string; content: string };
@@ -405,6 +406,16 @@ const Dashboard: Component = () => {
     })();
   });
 
+  createEffect(() => {
+    const currentAgents = agents();
+    if (cy && currentAgents.length > 0) {
+      cy.elements().remove();
+      cy.add(graphElements(currentAgents));
+      cy.layout({ name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.25 }).run();
+      cy.$id(selectedAgent()?.id ?? '').addClass('selected');
+    }
+  });
+
   onCleanup(() => cy?.destroy());
 
   return <main class="canvas-page">
@@ -412,6 +423,13 @@ const Dashboard: Component = () => {
       <div><p class="eyebrow">Actualised.ai / company canvas</p><h1>Company structure</h1></div>
       <div class="canvas-actions">
         <span>{agents().length} agents</span>
+        <Show when={isOrchestratorRunning() || isContinuousLoop()}>
+          <div class="pulsing-indicator" aria-label="Orchestrator is running" style="display:flex; align-items:center; color:#c25b3f; margin-right:4px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" class="pulse-anim">
+              <circle cx="12" cy="12" r="8" fill="currentColor" />
+            </svg>
+          </div>
+        </Show>
         <button type="button" class="icon-button" aria-label="Add Agent" onClick={async () => {
           if (!orchestrator) return;
           const id = `agent_${Date.now()}`;
@@ -421,7 +439,9 @@ const Dashboard: Component = () => {
           selectAgent(companyAgents.find(a => a.id === id)!, true);
           setIsEditingAgent(true);
           setDraftAgent(companyAgents.find(a => a.id === id)!);
-        }}>+</button>
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
         <button
           type="button"
           class="icon-button step-button"
@@ -429,18 +449,33 @@ const Dashboard: Component = () => {
           aria-label="Step orchestrator cycle"
           disabled={isOrchestratorRunning()}
           onClick={runOrchestratorCycle}
-        >⏭</button>
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+        </button>
         <button
           type="button"
           class="icon-button play-button"
           classList={{ 'is-running': isContinuousLoop() }}
           aria-label={isContinuousLoop() ? 'Pause continuous execution' : 'Start continuous execution'}
           onClick={toggleContinuousLoop}
-        >{isContinuousLoop() ? '⏸' : '▶'}</button>
-        <button type="button" class="icon-button" aria-label="Shared team directory" onClick={openSharedDirectory}>🗂</button>
-        <button type="button" class="icon-button" aria-label="Tool Library" onClick={openToolLibrary}>🛠</button>
-        <button type="button" class="icon-button" aria-label="Inference settings" onClick={openSettings}>⚙</button>
-        <button class="secondary-button" onClick={() => cy?.fit(undefined, 60)}>Centre canvas</button>
+        >
+          {isContinuousLoop() ? 
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg> : 
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          }
+        </button>
+        <button type="button" class="icon-button" aria-label="Shared team directory" onClick={openSharedDirectory}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+        </button>
+        <button type="button" class="icon-button" aria-label="Tool Library" onClick={openToolLibrary}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg>
+        </button>
+        <button type="button" class="icon-button" aria-label="Inference settings" onClick={openSettings}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
+        <button type="button" class="icon-button" aria-label="Centre canvas" onClick={() => cy?.fit(undefined, 60)}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+        </button>
       </div>
     </header>
     <Show when={error()}>{(message) => <p class="canvas-error">Could not initialise the company: {message()}</p>}</Show>
@@ -478,6 +513,22 @@ const Dashboard: Component = () => {
         <Show when={!isEditingAgent()}>
           <h2>{agent().name}</h2><p class="agent-role">{agent().role}</p>
           <div class="inspector-section"><h3>Operating brief</h3><p>{agent().system_prompt}</p></div>
+          <Show when={(agent().scheduled_tasks?.length ?? 0) > 0}>
+            <div class="inspector-section">
+              <h3>Scheduled Tasks</h3>
+              <ul class="task-list">
+                <For each={agent().scheduled_tasks}>
+                  {(task) => <li>
+                    <input type="checkbox" checked={task.completed} disabled />
+                    <div>
+                      <span style={task.completed ? "text-decoration: line-through;" : ""}>{task.description}</span>
+                      <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Due: {new Date(task.due_date).toLocaleString()}</div>
+                    </div>
+                  </li>}
+                </For>
+              </ul>
+            </div>
+          </Show>
           <div class="inspector-section"><h3>Tools</h3><div class="tool-list"><For each={agent().tools}>{(tool) => <span>{tool}</span>}</For></div></div>
         </Show>
         
@@ -492,6 +543,17 @@ const Dashboard: Component = () => {
           }} class="settings-form" style="margin-top: 16px;">
             <label>Name <input required value={draftAgent()?.name} onInput={e => setDraftAgent(p => ({...p!, name: e.currentTarget.value}))} /></label>
             <label>Role <input required value={draftAgent()?.role} onInput={e => setDraftAgent(p => ({...p!, role: e.currentTarget.value}))} /></label>
+            <label>Manager
+              <select 
+                value={draftAgent()?.parent_id || ''} 
+                onChange={e => setDraftAgent(p => ({...p!, parent_id: e.currentTarget.value || null}))}
+              >
+                <option value="">None (Top Level)</option>
+                <For each={agents().filter(a => a.id !== draftAgent()?.id)}>
+                  {(a) => <option value={a.id}>{a.name} ({a.role})</option>}
+                </For>
+              </select>
+            </label>
             <label>Operating brief <textarea required value={draftAgent()?.system_prompt} rows={4} onInput={e => setDraftAgent(p => ({...p!, system_prompt: e.currentTarget.value}))} /></label>
             <div class="inspector-section">
               <label>Tools
@@ -515,9 +577,21 @@ const Dashboard: Component = () => {
                 </select>
               </label>
             </div>
-            <div style="display:flex; gap:8px; margin-top:16px;">
-              <button type="submit" class="primary-button">Save</button>
-              <button type="button" class="secondary-button" onClick={() => setIsEditingAgent(false)}>Cancel</button>
+            <div style="display:flex; justify-content:space-between; margin-top:16px;">
+              <div style="display:flex; gap:8px;">
+                <button type="submit" class="primary-button">Save</button>
+                <button type="button" class="secondary-button" onClick={() => setIsEditingAgent(false)}>Cancel</button>
+              </div>
+              <button type="button" class="secondary-button" style="color:#c25b3f; border-color:#c25b3f;" onClick={async () => {
+                if (confirm('Are you sure you want to delete this agent?')) {
+                  if(!orchestrator) return;
+                  await callOrchestrator(o => o.remove_agent(draftAgent()!.id));
+                  const newAgents = orchestrator!.get_agents() as Agent[];
+                  setAgents(newAgents);
+                  setSelectedAgent(newAgents[0]);
+                  setIsEditingAgent(false);
+                }
+              }}>Delete</button>
             </div>
           </form>
         </Show>
