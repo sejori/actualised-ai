@@ -3,3 +3,4 @@ pub mod orchestrator;
 pub mod sandbox;
 pub mod state;
 pub mod inference;
+pub mod queue;

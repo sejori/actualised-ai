@@ -69,6 +69,10 @@ When the LLM decides to use a tool, the orchestrator performs the side effect:
 - **`create_sub_project`**: Updates the SurrealKV embedded graph database.
 - **`write_memory`**: Persists the agent's output to their local filesystem footprint (`./local_state/[agent_id]/memories`).
 
+### 4. Batched Parallel Inference
+
+To maximize efficiency and minimize bottlenecking, tree traversal is separated from inference execution. The orchestrator stages all possible agent work during its DFS/BFS loop into an `InferenceQueue`. The queue then dispatches these jobs as batched parallel requests, adhering to configured rate limits while tracking crucial stats like tokens per second. This allows the system to fine-tune its inference output to match API provider constraints.
+
 ## Quick Start (Rust Native)
 
 1. **Install Prerequisites**: You'll need Node.js (v24+) and Rust (`rustup`).

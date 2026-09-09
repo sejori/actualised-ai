@@ -16,9 +16,22 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum InferenceResponse {
+pub struct InferenceStats {
+    pub prompt_tokens: usize,
+    pub completion_tokens: usize,
+    pub total_tokens: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum InferenceResult {
     Text(String),
     ToolCalls(Vec<ToolCall>),
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InferenceResponse {
+    pub result: InferenceResult,
+    pub stats: InferenceStats,
 }
 
 #[async_trait]
@@ -32,14 +45,27 @@ pub struct MockInferenceEngine;
 impl InferenceEngine for MockInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        
+        let stats = InferenceStats {
+            prompt_tokens: system_prompt.len() + user_prompt.len(),
+            completion_tokens: 50,
+            total_tokens: system_prompt.len() + user_prompt.len() + 50,
+        };
+
         if tools.is_empty() {
-            Ok(InferenceResponse::Text(format!("[MOCK INFERENCE RESPONSE]. Received system prompt length: {}, user prompt length: {}.", system_prompt.len(), user_prompt.len())))
+            Ok(InferenceResponse {
+                result: InferenceResult::Text(format!("[MOCK INFERENCE RESPONSE]. Received system prompt length: {}, user prompt length: {}.", system_prompt.len(), user_prompt.len())),
+                stats,
+            })
         } else {
-            Ok(InferenceResponse::ToolCalls(vec![ToolCall {
-                id: "mock_id".to_string(),
-                name: tools[0].name.clone(),
-                args: json!({}),
-            }]))
+            Ok(InferenceResponse {
+                result: InferenceResult::ToolCalls(vec![ToolCall {
+                    id: "mock_id".to_string(),
+                    name: tools[0].name.clone(),
+                    args: json!({}),
+                }]),
+                stats,
+            })
         }
     }
 }
@@ -86,6 +112,18 @@ impl InferenceEngine for GeminiInferenceEngine {
         
         let response_json: serde_json::Value = res.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
         
+        let mut stats = InferenceStats {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        };
+        
+        if let Some(usage) = response_json.get("usageMetadata") {
+            stats.prompt_tokens = usage.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            stats.completion_tokens = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            stats.total_tokens = usage.get("totalTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        }
+
         if let Some(parts) = response_json["candidates"][0]["content"]["parts"].as_array() {
             let mut tool_calls = Vec::new();
             for part in parts {
@@ -98,11 +136,17 @@ impl InferenceEngine for GeminiInferenceEngine {
                 }
             }
             if !tool_calls.is_empty() {
-                return Ok(InferenceResponse::ToolCalls(tool_calls));
+                return Ok(InferenceResponse {
+                    result: InferenceResult::ToolCalls(tool_calls),
+                    stats,
+                });
             }
             
             if let Some(text) = parts[0].get("text") {
-                return Ok(InferenceResponse::Text(text.as_str().unwrap_or_default().to_string()));
+                return Ok(InferenceResponse {
+                    result: InferenceResult::Text(text.as_str().unwrap_or_default().to_string()),
+                    stats,
+                });
             }
         }
 
@@ -141,7 +185,7 @@ mod tests {
     async fn test_mock_engine_text() {
         let engine = MockInferenceEngine;
         let res = engine.generate_response("sys", "user", vec![]).await.unwrap();
-        if let InferenceResponse::Text(t) = res {
+        if let InferenceResult::Text(t) = res.result {
             assert!(t.contains("[MOCK INFERENCE RESPONSE]"));
         } else {
             panic!("Expected Text response");
@@ -157,7 +201,7 @@ mod tests {
             parameters: json!({}),
         };
         let res = engine.generate_response("sys", "user", vec![tool]).await.unwrap();
-        if let InferenceResponse::ToolCalls(calls) = res {
+        if let InferenceResult::ToolCalls(calls) = res.result {
             assert_eq!(calls.len(), 1);
             assert_eq!(calls[0].name, "mock_tool");
         } else {

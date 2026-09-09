@@ -1,6 +1,7 @@
 use crate::state::{CompanyState, Project};
-use crate::inference::{InferenceEngine, MockInferenceEngine, InferenceResponse, Tool};
+use crate::inference::{InferenceEngine, MockInferenceEngine, Tool, InferenceResult};
 use crate::memory::MemoryManager;
+use crate::queue::{InferenceQueue, InferenceRequest};
 use petgraph::graph::DiGraph;
 
 pub struct Orchestrator {
@@ -21,11 +22,18 @@ impl Orchestrator {
     }
 
     pub async fn run(&mut self) {
-        println!("Orchestrator starting DFS loop...");
+        println!("Orchestrator staging work to inference queue...");
+        
+        // Take the configured inference engine
+        let engine = std::mem::replace(&mut self.inference, Box::new(MockInferenceEngine));
+        let max_concurrent_requests = 5; // Configurable rate limit
+        let queue = InferenceQueue::new(engine, max_concurrent_requests);
         
         let agents = self.state.agents.clone();
-        for agent in agents {
-            println!("Waking up agent: {} ({})", agent.name, agent.role);
+        let mut requests = Vec::new();
+
+        for agent in &agents {
+            println!("Staging work for agent: {} ({})", agent.name, agent.role);
             
             let mut defined_tools = Vec::new();
             for t in &agent.tools {
@@ -58,48 +66,68 @@ impl Orchestrator {
                 }
             }
 
-            let response = self.inference.generate_response(
-                &agent.system_prompt,
-                "What actions will you take on your assigned tasks?",
-                defined_tools
-            ).await;
+            requests.push(InferenceRequest {
+                agent_id: agent.id.clone(),
+                system_prompt: agent.system_prompt.clone(),
+                user_prompt: "What actions will you take on your assigned tasks?".to_string(),
+                tools: defined_tools,
+            });
+        }
 
+        println!("Executing {} batched requests in parallel...", requests.len());
+        let (responses, stats) = queue.process_batch(requests).await;
+
+        println!("\n--- Inference Queue Stats ---");
+        println!("Total Requests: {}", stats.total_requests);
+        println!("Total Tokens: {}", stats.total_tokens);
+        println!("Prompt Tokens: {}", stats.total_prompt_tokens);
+        println!("Completion Tokens: {}", stats.total_completion_tokens);
+        println!("Elapsed Time: {:.2}s", stats.elapsed_time_sec);
+        println!("Tokens/sec: {:.2}", stats.tokens_per_sec);
+        println!("-----------------------------\n");
+
+        for (agent_id, response) in responses {
             match response {
-                Ok(InferenceResponse::Text(text)) => {
-                    println!("Agent Response (Text): {}", text);
-                }
-                Ok(InferenceResponse::ToolCalls(calls)) => {
-                    for call in calls {
-                        println!("Agent called tool: {}", call.name);
-                        if call.name == "create_sub_project" {
-                            let title = call.args["title"].as_str().unwrap_or_default().to_string();
-                            let description = call.args["description"].as_str().unwrap_or_default().to_string();
-                            let project = Project {
-                                id: format!("proj_{}", uuid::Uuid::new_v4().simple()),
-                                title: title.clone(),
-                                description,
-                            };
-                            if let Err(e) = self.state.add_project(project).await {
-                                println!("Failed to create project: {}", e);
-                            } else {
-                                println!("Successfully created sub-project: {}", title);
-                            }
-                        } else if call.name == "write_memory" {
-                            let file_name = call.args["file_name"].as_str().unwrap_or("output.txt");
-                            let content = call.args["content"].as_str().unwrap_or_default();
-                            if let Err(e) = self.memory.write_memory(&agent.id, file_name, content) {
-                                println!("Failed to write memory: {}", e);
-                            } else {
-                                println!("Successfully wrote memory file: {}", file_name);
+                Ok(res) => {
+                    match res.result {
+                        InferenceResult::Text(text) => {
+                            println!("Agent {} Response (Text): {}", agent_id, text);
+                        }
+                        InferenceResult::ToolCalls(calls) => {
+                            for call in calls {
+                                println!("Agent {} called tool: {}", agent_id, call.name);
+                                if call.name == "create_sub_project" {
+                                    let title = call.args["title"].as_str().unwrap_or_default().to_string();
+                                    let description = call.args["description"].as_str().unwrap_or_default().to_string();
+                                    let project = Project {
+                                        id: format!("proj_{}", uuid::Uuid::new_v4().simple()),
+                                        title: title.clone(),
+                                        description,
+                                    };
+                                    if let Err(e) = self.state.add_project(project).await {
+                                        println!("Failed to create project: {}", e);
+                                    } else {
+                                        println!("Successfully created sub-project: {}", title);
+                                    }
+                                } else if call.name == "write_memory" {
+                                    let file_name = call.args["file_name"].as_str().unwrap_or("output.txt");
+                                    let content = call.args["content"].as_str().unwrap_or_default();
+                                    if let Err(e) = self.memory.write_memory(&agent_id, file_name, content) {
+                                        println!("Failed to write memory: {}", e);
+                                    } else {
+                                        println!("Successfully wrote memory file: {}", file_name);
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Inference Error: {}", e);
+                    println!("Inference Error for Agent {}: {}", agent_id, e);
                 }
             }
         }
-        println!("DFS Loop complete. Engine resting.");
+
+        println!("DFS/Batch Loop complete. Engine resting.");
     }
 }
