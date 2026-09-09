@@ -1,11 +1,22 @@
 import { Component, createSignal, onMount, Show } from 'solid-js';
 import cytoscape from 'cytoscape';
-// We will import actualised-sdk or wasm-bindings here when built.
+// @ts-ignore
+import initWasm, { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
 
 const Dashboard: Component = () => {
   let cyContainer!: HTMLDivElement;
 
-  onMount(() => {
+  onMount(async () => {
+    // Initialize WASM
+    try {
+      await initWasm();
+      console.log("WASM Initialized Successfully");
+      const orchestrator = await OrchestratorWasm.init();
+      console.log("Orchestrator created", orchestrator);
+    } catch (e) {
+      console.error("Failed to load WASM or initialize orchestrator", e);
+    }
+
     const cy = cytoscape({
       container: cyContainer,
       elements: [
@@ -45,14 +56,14 @@ const Dashboard: Component = () => {
   return (
     <div class="h-full w-full flex flex-col">
       <h2 class="text-2xl font-bold p-4">Dashboard</h2>
-      <div ref={cyContainer} class="flex-grow border border-gray-300 m-4 rounded" />
+      <div ref={cyContainer} class="flex-grow border border-gray-300 m-4 rounded min-h-[500px]" />
     </div>
   );
 };
 
 const SetupPage: Component<{ onComplete: () => void }> = (props) => {
   return (
-    <div class="flex flex-col items-center justify-center h-full space-y-4">
+    <div class="flex flex-col items-center justify-center h-full space-y-4 pt-20">
       <h1 class="text-3xl font-bold">Actualised AI - Setup</h1>
       <p>Initialize your company state and top-level agents.</p>
       <button 
@@ -69,7 +80,7 @@ const App: Component = () => {
   const [isSetup, setIsSetup] = createSignal(false);
 
   return (
-    <div class="h-screen w-screen bg-gray-50 text-gray-900 font-sans">
+    <div class="min-h-screen w-full bg-gray-50 text-gray-900 font-sans">
       <Show when={!isSetup()} fallback={<Dashboard />}>
         <SetupPage onComplete={() => setIsSetup(true)} />
       </Show>
