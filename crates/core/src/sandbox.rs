@@ -26,13 +26,31 @@ pub struct LocalSubprocessSandbox {
 
 #[async_trait]
 impl Sandbox for LocalSubprocessSandbox {
-    async fn execute_command(&self, _cmd: &str, _args: &[&str]) -> Result<ExecutionOutput, SandboxError> {
-        // Implementation stub
-        Ok(ExecutionOutput {
-            stdout: String::new(),
-            stderr: String::new(),
-            exit_code: 0,
-        })
+    async fn execute_command(&self, cmd: &str, args: &[&str]) -> Result<ExecutionOutput, SandboxError> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::process::Stdio;
+            use tokio::process::Command;
+
+            let output = Command::new(cmd)
+                .args(args)
+                .current_dir(&self.working_dir)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .map_err(|e| SandboxError(format!("Failed to execute command: {}", e)))?;
+
+            Ok(ExecutionOutput {
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                exit_code: output.status.code().unwrap_or(-1),
+            })
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Err(SandboxError("Command execution is not supported in WASM".to_string()))
+        }
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, SandboxError> {

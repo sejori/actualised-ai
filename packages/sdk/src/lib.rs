@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 pub struct Company {
     state: Arc<Mutex<CompanyState>>,
     state_dir: String,
+    rate_limit: Arc<Mutex<actualised_core::queue::RateLimitConfig>>,
 }
 
 #[napi]
@@ -24,7 +25,20 @@ impl Company {
         Ok(Self {
             state: Arc::new(Mutex::new(state)),
             state_dir: state_directory,
+            rate_limit: Arc::new(Mutex::new(actualised_core::queue::RateLimitConfig::default())),
         })
+    }
+
+    #[napi]
+    pub async fn set_pacing(&self, requests_per_minute: f64, working_hours_start: Option<String>, working_hours_end: Option<String>) -> napi::Result<()> {
+        let mut rl = self.rate_limit.lock().await;
+        rl.requests_per_minute = requests_per_minute;
+        if let (Some(s), Some(e)) = (working_hours_start, working_hours_end) {
+            rl.working_hours = Some((s, e));
+        } else {
+            rl.working_hours = None;
+        }
+        Ok(())
     }
 
     #[napi]

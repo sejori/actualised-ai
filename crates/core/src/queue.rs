@@ -28,16 +28,18 @@ pub struct QueueStats {
 }
 
 /// User-configurable throughput limits for the inference queue, driven by the settings UI.
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RateLimitConfig {
     pub max_concurrent_requests: usize,
-    /// Maximum number of requests dispatched per second. `0` means unlimited (only bounded by concurrency).
-    pub requests_per_second: f64,
+    /// Maximum number of requests dispatched per minute. Supports decimal values. `0` means unlimited.
+    pub requests_per_minute: f64,
+    /// Optional working hours in format "HH:MM" (start, end)
+    pub working_hours: Option<(String, String)>,
 }
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
-        Self { max_concurrent_requests: 5, requests_per_second: 0.0 }
+        Self { max_concurrent_requests: 5, requests_per_minute: 0.0, working_hours: None }
     }
 }
 
@@ -61,8 +63,8 @@ impl InferenceQueue {
         let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let mut handles = Vec::new();
         let total_requests = requests.len();
-        let dispatch_interval = if self.rate_limit.requests_per_second > 0.0 {
-            Some(Duration::from_secs_f64(1.0 / self.rate_limit.requests_per_second))
+        let dispatch_interval = if self.rate_limit.requests_per_minute > 0.0 {
+            Some(Duration::from_secs_f64(60.0 / self.rate_limit.requests_per_minute))
         } else {
             None
         };
@@ -70,8 +72,26 @@ impl InferenceQueue {
         let start_time = Instant::now();
 
         for (index, req) in requests.into_iter().enumerate() {
+            if let Some((start, end)) = &self.rate_limit.working_hours {
+                loop {
+                    let now = chrono::Local::now().time();
+                    let start_time = chrono::NaiveTime::parse_from_str(start, "%H:%M").unwrap_or_default();
+                    let end_time = chrono::NaiveTime::parse_from_str(end, "%H:%M").unwrap_or_default();
+                    if now >= start_time && now <= end_time {
+                        break;
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    sleep(Duration::from_secs(60)).await;
+                    #[cfg(target_arch = "wasm32")]
+                    sleep(Duration::from_secs(60)).await;
+                }
+            }
+
             if let Some(interval) = dispatch_interval {
                 if index > 0 {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    sleep(interval).await;
+                    #[cfg(target_arch = "wasm32")]
                     sleep(interval).await;
                 }
             }

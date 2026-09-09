@@ -168,10 +168,24 @@ const Dashboard: Component = () => {
     }
   };
 
+  // SSE streaming connection to serve as the chat interface boundary to the orchestrator/SDKs
+  createEffect(() => {
+    // In a deployed environment, this connects to the SDK/Orchestrator backend
+    const sse = new EventSource('/api/orchestrator/stream');
+    sse.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'chat_update' && data.agentId === selectedAgent()?.id) {
+        void refreshAgentDetails(data.agentId);
+      }
+    };
+    onCleanup(() => sse.close());
+  });
+
   const sendAgentMessage = async (agentId: string) => {
     const message = messageDraft().trim();
     if (!message || !orchestrator) return;
     setMessageDraft('');
+    // For local WASM mode, we call directly. For remote mode, we would POST to an API.
     await callOrchestrator((o) => o.send_agent_message(agentId, message));
     await refreshAgentDetails(agentId);
   };

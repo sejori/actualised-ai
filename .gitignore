@@ -20,4 +20,11 @@ actualised_state/
 # OS Files
 .DS_Store
 Thumbs.db
-.vscode                                     
+.vscode
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json

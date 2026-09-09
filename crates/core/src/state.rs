@@ -4,7 +4,9 @@ use crate::inference::Tool;
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb::Surreal;
 #[cfg(not(target_arch = "wasm32"))]
-use surrealdb::engine::local::{Db, SurrealKV};
+use surrealdb::engine::any::{connect, Any};
+#[cfg(not(target_arch = "wasm32"))]
+use surrealdb::opt::auth::Root;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Agent {
@@ -33,7 +35,7 @@ pub struct SharedFile {
 /// Abstract representation of the company state (SurrealDB or in-memory)
 pub struct CompanyState {
     #[cfg(not(target_arch = "wasm32"))]
-    pub db: Surreal<Db>,
+    pub db: Surreal<Any>,
     pub agents: Vec<Agent>,
     pub projects: Vec<Project>,
     pub tools: Vec<Tool>,
@@ -43,7 +45,21 @@ pub struct CompanyState {
 impl CompanyState {
     #[cfg(not(target_arch = "wasm32"))]
     pub async fn init(db_path: &str) -> Result<Self, String> {
-        let db = Surreal::new::<SurrealKV>(db_path).await.map_err(|e| e.to_string())?;
+        let url = if db_path.contains("://") {
+            db_path.to_string()
+        } else {
+            format!("surrealkv://{}", db_path)
+        };
+
+        let db = connect(&url).await.map_err(|e| e.to_string())?;
+
+        if let (Ok(user), Ok(pass)) = (std::env::var("SURREALDB_USER"), std::env::var("SURREALDB_PASS")) {
+            db.signin(Root {
+                username: &user,
+                password: &pass,
+            }).await.map_err(|e| e.to_string())?;
+        }
+
         db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
         
         Ok(Self {
