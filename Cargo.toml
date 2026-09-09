@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/core",
+    "crates/core", "crates/core-wasm",
     "packages/sdk"
 ]
 resolver = "2"

@@ -47,13 +47,21 @@ impl InferenceQueue {
             let sem_clone = Arc::clone(&semaphore);
             let agent_id = req.agent_id.clone();
 
-            let handle = tokio::spawn(async move {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            
+            let fut = async move {
                 let _permit = sem_clone.acquire().await.unwrap();
                 let res = engine_clone.generate_response(&req.system_prompt, &req.user_prompt, req.tools).await;
-                (agent_id, res)
-            });
+                let _ = tx.send((agent_id, res));
+            };
 
-            handles.push(handle);
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::spawn(fut);
+            
+            #[cfg(target_arch = "wasm32")]
+            wasm_bindgen_futures::spawn_local(fut);
+
+            handles.push(rx);
         }
 
         let mut results = Vec::new();
