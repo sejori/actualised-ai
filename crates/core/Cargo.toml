@@ -3,6 +3,10 @@ name = "actualised-core"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+local-db = ["surrealdb/kv-surrealkv"]
+
 [dependencies]
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }

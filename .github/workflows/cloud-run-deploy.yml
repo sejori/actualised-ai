@@ -1,0 +1,57 @@
+name: Deploy to GCP Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          # We highly recommend using Workload Identity Federation instead of a Service Account JSON key.
+          # You will need to create a WIF pool and provider, and store its identifier as a repository secret.
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+          service_account: '${{ secrets.WSA_EMAIL }}'
+          # Fallback: uncomment and use this if using a service account JSON key instead
+          # credentials_json: '${{ secrets.GCP_CREDENTIALS }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Build and Push Docker Image
+        run: |
+          gcloud builds submit \
+            --tag gcr.io/gen-lang-client-0676741409/actualised-orchestrator:${{ github.sha }} \
+            --project gen-lang-client-0676741409 \
+            .
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init
+
+      - name: Terraform Apply
+        working-directory: infra
+        run: terraform apply -auto-approve
+        env:
+          # Tell terraform to use the specific SHA image we just built
+          TF_VAR_orchestrator_image: "gcr.io/gen-lang-client-0676741409/actualised-orchestrator:${{ github.sha }}"
+          # Secrets pulled from GitHub Actions Secrets
+          TF_VAR_surrealdb_url: ${{ secrets.SURREALDB_URL }}
+          TF_VAR_surrealdb_user: ${{ secrets.SURREALDB_USER }}
+          TF_VAR_surrealdb_pass: ${{ secrets.SURREALDB_PASS }}
+          TF_VAR_telegram_token: ${{ secrets.TELEGRAM_TOKEN }}
