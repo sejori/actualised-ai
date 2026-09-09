@@ -1,6 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Semaphore};
-use tokio::time::Instant;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::time::{sleep, Instant};
+#[cfg(target_arch = "wasm32")]
+use wasmtimer::std::Instant;
+#[cfg(target_arch = "wasm32")]
+use wasmtimer::tokio::sleep;
 
 use crate::inference::{InferenceEngine, InferenceResponse, Tool};
 
@@ -21,28 +27,55 @@ pub struct QueueStats {
     pub tokens_per_sec: f64,
 }
 
+/// User-configurable throughput limits for the inference queue, driven by the settings UI.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct RateLimitConfig {
+    pub max_concurrent_requests: usize,
+    /// Maximum number of requests dispatched per second. `0` means unlimited (only bounded by concurrency).
+    pub requests_per_second: f64,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self { max_concurrent_requests: 5, requests_per_second: 0.0 }
+    }
+}
+
 pub struct InferenceQueue {
     engine: Arc<Box<dyn InferenceEngine>>,
-    max_concurrent_requests: usize,
+    rate_limit: RateLimitConfig,
 }
 
 impl InferenceQueue {
-    pub fn new(engine: Box<dyn InferenceEngine>, max_concurrent_requests: usize) -> Self {
+    pub fn new(engine: Box<dyn InferenceEngine>, rate_limit: RateLimitConfig) -> Self {
         Self {
             engine: Arc::new(engine),
-            max_concurrent_requests,
+            rate_limit,
         }
     }
 
-    /// Processes a batch of requests in parallel, respecting the concurrency limit.
+    /// Processes a batch of requests in parallel, respecting the configured concurrency and
+    /// requests-per-second limits.
     pub async fn process_batch(&self, requests: Vec<InferenceRequest>) -> (Vec<(String, Result<InferenceResponse, String>)>, QueueStats) {
-        let semaphore = Arc::new(Semaphore::new(self.max_concurrent_requests));
+        let max_concurrent = self.rate_limit.max_concurrent_requests.max(1);
+        let semaphore = Arc::new(Semaphore::new(max_concurrent));
         let mut handles = Vec::new();
         let total_requests = requests.len();
+        let dispatch_interval = if self.rate_limit.requests_per_second > 0.0 {
+            Some(Duration::from_secs_f64(1.0 / self.rate_limit.requests_per_second))
+        } else {
+            None
+        };
 
         let start_time = Instant::now();
 
-        for req in requests {
+        for (index, req) in requests.into_iter().enumerate() {
+            if let Some(interval) = dispatch_interval {
+                if index > 0 {
+                    sleep(interval).await;
+                }
+            }
+
             let engine_clone = Arc::clone(&self.engine);
             let sem_clone = Arc::clone(&semaphore);
             let agent_id = req.agent_id.clone();

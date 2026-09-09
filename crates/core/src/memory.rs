@@ -1,7 +1,18 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryFile {
+    pub file_name: String,
+    pub content: String,
+}
 
 pub struct MemoryManager {
     base_dir: PathBuf,
+    // agent_id -> (file_name -> content); kept in-memory so it's readable from the UI on every target,
+    // including wasm where there's no real filesystem.
+    memories: Mutex<HashMap<String, HashMap<String, String>>>,
 }
 
 impl MemoryManager {
@@ -11,7 +22,7 @@ impl MemoryManager {
         {
             std::fs::create_dir_all(&base_dir)?;
         }
-        Ok(Self { base_dir })
+        Ok(Self { base_dir, memories: Mutex::new(HashMap::new()) })
     }
 
     pub fn setup_agent_dir(&self, agent_id: &str) -> std::io::Result<()> {
@@ -37,13 +48,23 @@ impl MemoryManager {
             std::fs::write(memories_dir.join(file_name), content)?;
         }
 
-        #[cfg(target_arch = "wasm32")]
-        {
-            // In a real WASM implementation, we would write to IndexedDB here.
-            // For now, we mock the memory write to avoid file system panics.
-            println!("[WASM Memory] Written to {}/memories/{}: {}", agent_id, file_name, content.len());
-        }
+        self.memories
+            .lock()
+            .unwrap()
+            .entry(agent_id.to_string())
+            .or_default()
+            .insert(file_name.to_string(), content.to_string());
 
         Ok(())
+    }
+
+    /// Returns every memory file written by an agent so far.
+    pub fn read_memories(&self, agent_id: &str) -> Vec<MemoryFile> {
+        self.memories
+            .lock()
+            .unwrap()
+            .get(agent_id)
+            .map(|files| files.iter().map(|(file_name, content)| MemoryFile { file_name: file_name.clone(), content: content.clone() }).collect())
+            .unwrap_or_default()
     }
 }

@@ -1,14 +1,28 @@
 use crate::state::{CompanyState, Project};
 use crate::inference::{InferenceEngine, MockInferenceEngine, Tool, InferenceResult};
 use crate::memory::MemoryManager;
-use crate::queue::{InferenceQueue, InferenceRequest};
+use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
 use petgraph::graph::DiGraph;
+use std::collections::HashMap;
+
+const DEFAULT_USER_PROMPT: &str = "What actions will you take on your assigned tasks?";
+
+/// The rolling conversational state the UI can inspect for a single agent.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AgentContext {
+    /// Operator messages queued via the UI, to be folded into the agent's next turn.
+    pub pending_messages: Vec<String>,
+    pub last_user_prompt: Option<String>,
+    pub last_response: Option<String>,
+}
 
 pub struct Orchestrator {
     pub state: CompanyState,
     pub task_graph: DiGraph<String, ()>,
     pub inference: Box<dyn InferenceEngine>,
     pub memory: MemoryManager,
+    pub rate_limit: RateLimitConfig,
+    pub agent_contexts: HashMap<String, AgentContext>,
 }
 
 impl Orchestrator {
@@ -18,7 +32,26 @@ impl Orchestrator {
             task_graph: DiGraph::new(),
             inference: Box::new(MockInferenceEngine),
             memory,
+            rate_limit: RateLimitConfig::default(),
+            agent_contexts: HashMap::new(),
         }
+    }
+
+    pub fn set_inference(&mut self, engine: Box<dyn InferenceEngine>) {
+        self.inference = engine;
+    }
+
+    pub fn set_rate_limit(&mut self, rate_limit: RateLimitConfig) {
+        self.rate_limit = rate_limit;
+    }
+
+    /// Queues an operator message to be appended to an agent's prompt on its next turn.
+    pub fn queue_message(&mut self, agent_id: &str, message: String) {
+        self.agent_contexts.entry(agent_id.to_string()).or_default().pending_messages.push(message);
+    }
+
+    pub fn get_agent_context(&self, agent_id: &str) -> AgentContext {
+        self.agent_contexts.get(agent_id).cloned().unwrap_or_default()
     }
 
     pub async fn run(&mut self) {
@@ -26,8 +59,7 @@ impl Orchestrator {
         
         // Take the configured inference engine
         let engine = std::mem::replace(&mut self.inference, Box::new(MockInferenceEngine));
-        let max_concurrent_requests = 5; // Configurable rate limit
-        let queue = InferenceQueue::new(engine, max_concurrent_requests);
+        let queue = InferenceQueue::new(engine, self.rate_limit);
         
         let agents = self.state.agents.clone();
         let mut requests = Vec::new();
@@ -66,10 +98,19 @@ impl Orchestrator {
                 }
             }
 
+            let context = self.agent_contexts.entry(agent.id.clone()).or_default();
+            let pending = std::mem::take(&mut context.pending_messages);
+            let user_prompt = if pending.is_empty() {
+                DEFAULT_USER_PROMPT.to_string()
+            } else {
+                format!("{}\n\nOperator messages for this turn:\n{}", DEFAULT_USER_PROMPT, pending.iter().map(|m| format!("- {}", m)).collect::<Vec<_>>().join("\n"))
+            };
+            context.last_user_prompt = Some(user_prompt.clone());
+
             requests.push(InferenceRequest {
                 agent_id: agent.id.clone(),
                 system_prompt: agent.system_prompt.clone(),
-                user_prompt: "What actions will you take on your assigned tasks?".to_string(),
+                user_prompt,
                 tools: defined_tools,
             });
         }
@@ -89,11 +130,14 @@ impl Orchestrator {
         for (agent_id, response) in responses {
             match response {
                 Ok(res) => {
-                    match res.result {
+                    match &res.result {
                         InferenceResult::Text(text) => {
                             println!("Agent {} Response (Text): {}", agent_id, text);
+                            self.agent_contexts.entry(agent_id.clone()).or_default().last_response = Some(text.clone());
                         }
                         InferenceResult::ToolCalls(calls) => {
+                            self.agent_contexts.entry(agent_id.clone()).or_default().last_response =
+                                Some(format!("Called tools: {}", calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", ")));
                             for call in calls {
                                 println!("Agent {} called tool: {}", agent_id, call.name);
                                 if call.name == "create_sub_project" {
@@ -124,6 +168,7 @@ impl Orchestrator {
                 }
                 Err(e) => {
                     println!("Inference Error for Agent {}: {}", agent_id, e);
+                    self.agent_contexts.entry(agent_id.clone()).or_default().last_response = Some(format!("Error: {}", e));
                 }
             }
         }

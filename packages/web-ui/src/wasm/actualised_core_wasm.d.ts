@@ -7,10 +7,15 @@ export class OrchestratorWasm {
     [Symbol.dispose](): void;
     add_agent(agent_json: any): Promise<void>;
     add_project(project_json: any): Promise<void>;
+    configure_inference(config_json: any): void;
+    configure_rate_limits(config_json: any): void;
+    get_agent_context(agent_id: string): any;
+    get_agent_memories(agent_id: string): any;
     get_agents(): any;
     get_projects(): any;
     static init(): Promise<OrchestratorWasm>;
     run_orchestrator(): Promise<void>;
+    send_agent_message(agent_id: string, message: string): void;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -20,12 +25,18 @@ export interface InitOutput {
     readonly __wbg_orchestratorwasm_free: (a: number, b: number) => void;
     readonly orchestratorwasm_add_agent: (a: number, b: any) => any;
     readonly orchestratorwasm_add_project: (a: number, b: any) => any;
+    readonly orchestratorwasm_configure_inference: (a: number, b: any) => [number, number];
+    readonly orchestratorwasm_configure_rate_limits: (a: number, b: any) => [number, number];
+    readonly orchestratorwasm_get_agent_context: (a: number, b: number, c: number) => [number, number, number];
+    readonly orchestratorwasm_get_agent_memories: (a: number, b: number, c: number) => [number, number, number];
     readonly orchestratorwasm_get_agents: (a: number) => [number, number, number];
     readonly orchestratorwasm_get_projects: (a: number) => [number, number, number];
     readonly orchestratorwasm_init: () => any;
     readonly orchestratorwasm_run_orchestrator: (a: number) => any;
-    readonly wasm_bindgen_d05406a4d4dc2481___convert__closures_____invoke___js_sys_3f1f6353c0c27803___Function_fn_wasm_bindgen_d05406a4d4dc2481___JsValue_____wasm_bindgen_d05406a4d4dc2481___sys__Undefined___js_sys_3f1f6353c0c27803___Function_fn_wasm_bindgen_d05406a4d4dc2481___JsValue_____wasm_bindgen_d05406a4d4dc2481___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
+    readonly orchestratorwasm_send_agent_message: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasm_bindgen_d05406a4d4dc2481___convert__closures_____invoke___js_sys_5b72c82c83b45550___Function_fn_wasm_bindgen_d05406a4d4dc2481___JsValue_____wasm_bindgen_d05406a4d4dc2481___sys__Undefined___js_sys_5b72c82c83b45550___Function_fn_wasm_bindgen_d05406a4d4dc2481___JsValue_____wasm_bindgen_d05406a4d4dc2481___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_d05406a4d4dc2481___convert__closures_____invoke___wasm_bindgen_d05406a4d4dc2481___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_d05406a4d4dc2481___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_d05406a4d4dc2481___convert__closures_____invoke_______true_: (a: number, b: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

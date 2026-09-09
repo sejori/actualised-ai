@@ -46,7 +46,10 @@ pub struct MockInferenceEngine;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for MockInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
+        #[cfg(not(target_arch = "wasm32"))]
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        #[cfg(target_arch = "wasm32")]
+        wasmtimer::tokio::sleep(std::time::Duration::from_millis(500)).await;
         
         let stats = InferenceStats {
             prompt_tokens: system_prompt.len() + user_prompt.len(),
@@ -72,8 +75,34 @@ impl InferenceEngine for MockInferenceEngine {
     }
 }
 
+/// User-selected inference configuration, coming straight from the web UI settings popover.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InferenceConfig {
+    pub provider: String,
+    pub model: String,
+    pub service_tier: Option<String>,
+    pub api_key: String,
+}
+
+/// Builds the engine matching a user's chosen provider. Falls back to the mock engine
+/// when the provider is unrecognised or no API key was supplied.
+pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
+    if config.api_key.trim().is_empty() {
+        return Box::new(MockInferenceEngine);
+    }
+
+    match config.provider.as_str() {
+        "gemini" => Box::new(GeminiInferenceEngine {
+            api_key: config.api_key.clone(),
+            model: if config.model.trim().is_empty() { "gemini-3.6-flash".to_string() } else { config.model.clone() },
+        }),
+        _ => Box::new(MockInferenceEngine),
+    }
+}
+
 pub struct GeminiInferenceEngine {
     pub api_key: String,
+    pub model: String,
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -81,7 +110,7 @@ pub struct GeminiInferenceEngine {
 impl InferenceEngine for GeminiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         let client = reqwest::Client::new();
-        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={}", self.api_key);
+        let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", self.model, self.api_key);
         
         let mut body = json!({
             "systemInstruction": { "parts": [{ "text": system_prompt }] },

@@ -8,6 +8,39 @@ import './App.css';
 type Agent = { id: string; name: string; role: string; parent_id: string | null; system_prompt: string; tools: string[] };
 type Project = { id: string; title: string; description: string };
 type HoverPosition = { x: number; y: number };
+type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string };
+type RateLimitSettings = { maxConcurrentRequests: number; requestsPerSecond: number };
+type MemoryFile = { file_name: string; content: string };
+type AgentContext = { pending_messages: string[]; last_user_prompt: string | null; last_response: string | null };
+
+const INFERENCE_PROVIDERS = [
+  { id: 'gemini', label: 'Google Gemini', models: ['gemini-3.6-flash', 'gemini-3.6-pro'], disabled: false },
+  { id: 'openai', label: 'OpenAI (coming soon)', models: ['gpt-5', 'gpt-5-mini'], disabled: true },
+  { id: 'anthropic', label: 'Anthropic (coming soon)', models: ['claude-4.5-sonnet'], disabled: true },
+] as const;
+const SERVICE_TIERS = ['default', 'flex', 'priority'];
+const SETTINGS_STORAGE_KEY = 'actualised.inference-settings';
+const RATE_LIMIT_STORAGE_KEY = 'actualised.rate-limits';
+
+function loadStoredSettings(): InferenceSettings {
+  const fallback: InferenceSettings = { provider: 'gemini', model: INFERENCE_PROVIDERS[0].models[0], serviceTier: 'default', apiKey: '' };
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadStoredRateLimits(): RateLimitSettings {
+  const fallback: RateLimitSettings = { maxConcurrentRequests: 5, requestsPerSecond: 0 };
+  try {
+    const raw = localStorage.getItem(RATE_LIMIT_STORAGE_KEY);
+    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 function graphElements(agents: Agent[]): ElementDefinition[] {
   const rootId = 'human-root';
@@ -21,7 +54,24 @@ function graphElements(agents: Agent[]): ElementDefinition[] {
 const Dashboard: Component = () => {
   let cyContainer!: HTMLDivElement;
   let cy: Core | undefined;
+  let orchestrator: OrchestratorWasm | undefined;
+  // Every call into `orchestrator` is funnelled through this chain so none ever overlap:
+  // wasm-bindgen panics ("recursive use of an object") if a method is invoked while another
+  // call on the same instance is still in flight (e.g. mid-await inside run_orchestrator()).
+  let wasmQueue: Promise<unknown> = Promise.resolve();
+  const callOrchestrator = <T,>(fn: (o: OrchestratorWasm) => T | Promise<T>): Promise<T> => {
+    const task = wasmQueue.then(() => {
+      if (!orchestrator) throw new Error('Orchestrator not ready');
+      return fn(orchestrator);
+    });
+    wasmQueue = task.then(
+      () => undefined,
+      () => undefined,
+    );
+    return task;
+  };
   let inspectorRef: HTMLElement | undefined;
+  let settingsRef: HTMLElement | undefined;
   let lastFocusedNodeButton: HTMLElement | undefined;
   const [agents, setAgents] = createSignal<Agent[]>([]);
   const [projects, setProjects] = createSignal<Project[]>([]);
@@ -29,11 +79,95 @@ const Dashboard: Component = () => {
   const [hoveredAgent, setHoveredAgent] = createSignal<Agent>();
   const [hoverPosition, setHoverPosition] = createSignal<HoverPosition>({ x: 0, y: 0 });
   const [isInspectorOpen, setIsInspectorOpen] = createSignal(false);
+  const [isSettingsOpen, setIsSettingsOpen] = createSignal(false);
+  const [inferenceSettings, setInferenceSettings] = createSignal<InferenceSettings>(loadStoredSettings());
+  const [draftSettings, setDraftSettings] = createSignal<InferenceSettings>(inferenceSettings());
+  const [rateLimitSettings, setRateLimitSettings] = createSignal<RateLimitSettings>(loadStoredRateLimits());
+  const [draftRateLimit, setDraftRateLimit] = createSignal<RateLimitSettings>(rateLimitSettings());
+  const [isOrchestratorRunning, setIsOrchestratorRunning] = createSignal(false);
+  const [agentMemories, setAgentMemories] = createSignal<MemoryFile[]>([]);
+  const [agentContext, setAgentContext] = createSignal<AgentContext>();
+  const [messageDraft, setMessageDraft] = createSignal('');
   const [error, setError] = createSignal<string>();
 
+  const applyInferenceSettings = async (settings: InferenceSettings) => {
+    try {
+      await callOrchestrator((o) => o.configure_inference({ provider: settings.provider, model: settings.model, service_tier: settings.serviceTier || null, api_key: settings.apiKey }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to apply inference settings');
+    }
+  };
+
+  const applyRateLimits = async (settings: RateLimitSettings) => {
+    try {
+      await callOrchestrator((o) => o.configure_rate_limits({ max_concurrent_requests: settings.maxConcurrentRequests, requests_per_second: settings.requestsPerSecond }));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to apply rate limits');
+    }
+  };
+
+  const refreshAgentDetails = async (agentId: string) => {
+    if (!orchestrator) return;
+    try {
+      const [memories, context] = await Promise.all([
+        callOrchestrator((o) => o.get_agent_memories(agentId) as MemoryFile[]),
+        callOrchestrator((o) => o.get_agent_context(agentId) as AgentContext),
+      ]);
+      setAgentMemories(memories);
+      setAgentContext(context);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Failed to load agent details');
+    }
+  };
+
+  const sendAgentMessage = async (agentId: string) => {
+    const message = messageDraft().trim();
+    if (!message || !orchestrator) return;
+    setMessageDraft('');
+    await callOrchestrator((o) => o.send_agent_message(agentId, message));
+    await refreshAgentDetails(agentId);
+  };
+
+  const openSettings = () => {
+    setIsInspectorOpen(false);
+    setDraftSettings(inferenceSettings());
+    setDraftRateLimit(rateLimitSettings());
+    setIsSettingsOpen(true);
+  };
+
+  const saveSettings = (event: SubmitEvent) => {
+    event.preventDefault();
+    const settings = draftSettings();
+    const rateLimits = draftRateLimit();
+    setInferenceSettings(settings);
+    setRateLimitSettings(rateLimits);
+    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    localStorage.setItem(RATE_LIMIT_STORAGE_KEY, JSON.stringify(rateLimits));
+    void applyInferenceSettings(settings);
+    void applyRateLimits(rateLimits);
+    setIsSettingsOpen(false);
+  };
+
+  const runOrchestratorCycle = async () => {
+    if (!orchestrator || isOrchestratorRunning()) return;
+    setIsOrchestratorRunning(true);
+    try {
+      await callOrchestrator((o) => o.run_orchestrator());
+      const agent = selectedAgent();
+      if (agent) await refreshAgentDetails(agent.id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Orchestrator run failed');
+    } finally {
+      setIsOrchestratorRunning(false);
+    }
+  };
+
   const selectAgent = (agent: Agent, openInspector = true) => {
+    setIsSettingsOpen(false);
     setSelectedAgent(agent);
     setIsInspectorOpen(openInspector);
+    setMessageDraft('');
+    void refreshAgentDetails(agent.id);
     cy?.nodes('.selected').removeClass('selected');
     const node = cy?.$id(agent.id);
     if (node) {
@@ -50,14 +184,16 @@ const Dashboard: Component = () => {
   };
 
   const handleKeydown = (event: KeyboardEvent) => {
-    if (event.key === 'Escape' && isInspectorOpen()) setIsInspectorOpen(false);
+    if (event.key !== 'Escape') return;
+    if (isSettingsOpen()) setIsSettingsOpen(false);
+    else if (isInspectorOpen()) setIsInspectorOpen(false);
   };
   window.addEventListener('keydown', handleKeydown);
   onCleanup(() => window.removeEventListener('keydown', handleKeydown));
 
-  const trapInspectorTab = (event: KeyboardEvent) => {
-    if (event.key !== 'Tab' || !inspectorRef) return;
-    const focusable = inspectorRef.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+  const trapTabWithin = (container: HTMLElement | undefined) => (event: KeyboardEvent) => {
+    if (event.key !== 'Tab' || !container) return;
+    const focusable = container.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
     if (focusable.length === 0) return;
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
@@ -69,6 +205,8 @@ const Dashboard: Component = () => {
       first.focus();
     }
   };
+  const trapInspectorTab = (event: KeyboardEvent) => trapTabWithin(inspectorRef)(event);
+  const trapSettingsTab = (event: KeyboardEvent) => trapTabWithin(settingsRef)(event);
 
   createEffect(
     () => isInspectorOpen(),
@@ -81,15 +219,29 @@ const Dashboard: Component = () => {
     },
   );
 
+  createEffect(
+    () => isSettingsOpen(),
+    (open) => {
+      if (open) {
+        settingsRef?.querySelector<HTMLElement>('select, input')?.focus();
+      } else {
+        lastFocusedNodeButton?.focus();
+      }
+    },
+  );
+
   onSettled(() => {
     void (async () => {
       try {
         await initWasm();
-        const orchestrator = await OrchestratorWasm.init();
+        orchestrator = await OrchestratorWasm.init();
+        await applyInferenceSettings(inferenceSettings());
+        await applyRateLimits(rateLimitSettings());
         const companyAgents = orchestrator.get_agents() as Agent[];
         setAgents(companyAgents);
         setProjects(orchestrator.get_projects() as Project[]);
         setSelectedAgent(companyAgents[0]);
+        if (companyAgents[0]) await refreshAgentDetails(companyAgents[0].id);
 
         cy = cytoscape({
           container: cyContainer,
@@ -131,7 +283,19 @@ const Dashboard: Component = () => {
   return <main class="canvas-page">
     <header class="canvas-header">
       <div><p class="eyebrow">Actualised.ai / company canvas</p><h1>Company structure</h1></div>
-      <div class="canvas-actions"><span>{agents().length} agents</span><button class="secondary-button" onClick={() => cy?.fit(undefined, 60)}>Centre canvas</button></div>
+      <div class="canvas-actions">
+        <span>{agents().length} agents</span>
+        <button
+          type="button"
+          class="icon-button play-button"
+          classList={{ 'is-running': isOrchestratorRunning() }}
+          aria-label={isOrchestratorRunning() ? 'Orchestrator cycle running' : 'Run orchestrator cycle'}
+          disabled={isOrchestratorRunning()}
+          onClick={runOrchestratorCycle}
+        >{isOrchestratorRunning() ? '⏸' : '▶'}</button>
+        <button type="button" class="icon-button" aria-label="Inference settings" onClick={openSettings}>⚙</button>
+        <button class="secondary-button" onClick={() => cy?.fit(undefined, 60)}>Centre canvas</button>
+      </div>
     </header>
     <Show when={error()}>{(message) => <p class="canvas-error">Could not initialise the company: {message()}</p>}</Show>
 
@@ -162,7 +326,113 @@ const Dashboard: Component = () => {
         <div class="inspector-section"><h3>Operating brief</h3><p>{agent().system_prompt}</p></div>
         <div class="inspector-section"><h3>Tools</h3><div class="tool-list"><For each={agent().tools}>{(tool) => <span>{tool}</span>}</For></div></div>
         <Show when={!agent().parent_id}><div class="inspector-section"><h3>Root projects</h3><ul class="project-list"><For each={projects()}>{(project) => <li><strong>{project.title}</strong><span>{project.description}</span></li>}</For></ul></div></Show>
+
+        <div class="inspector-section">
+          <h3>Memories</h3>
+          <Show when={agentMemories().length > 0} fallback={<p class="empty-hint">No memory files written yet.</p>}>
+            <ul class="memory-list">
+              <For each={agentMemories()}>{(file) => <li><strong>{file.file_name}</strong><pre>{file.content}</pre></li>}</For>
+            </ul>
+          </Show>
+        </div>
+
+        <div class="inspector-section">
+          <h3>Inference context</h3>
+          <Show when={agentContext()?.last_user_prompt} fallback={<p class="empty-hint">No turns run yet.</p>}>
+            <p class="context-label">Last prompt sent</p><p class="context-value">{agentContext()?.last_user_prompt}</p>
+            <p class="context-label">Last response</p><p class="context-value">{agentContext()?.last_response ?? '—'}</p>
+          </Show>
+          <Show when={(agentContext()?.pending_messages.length ?? 0) > 0}>
+            <p class="context-label">Queued for next turn</p>
+            <ul class="pending-list"><For each={agentContext()?.pending_messages}>{(message) => <li>{message}</li>}</For></ul>
+          </Show>
+          <form
+            class="message-form"
+            onSubmit={(event) => { event.preventDefault(); sendAgentMessage(agent().id); }}
+          >
+            <label for="agent-message">Send a message into this agent's next turn</label>
+            <textarea
+              id="agent-message"
+              rows="3"
+              placeholder="e.g. Prioritise the onboarding bug before anything else"
+              value={messageDraft()}
+              onInput={(event) => setMessageDraft(event.currentTarget.value)}
+            />
+            <button type="submit" class="secondary-button" disabled={!messageDraft().trim()}>Queue message</button>
+          </form>
+        </div>
       </aside>}
+    </Show>
+
+    <Show when={isSettingsOpen()}>
+      <aside ref={settingsRef} class="settings-popover" aria-label="Inference settings" onKeyDown={trapSettingsTab}>
+        <div class="inspector-nav">
+          <p class="eyebrow">Inference settings</p>
+          <button class="icon-button close-button" aria-label="Close settings" onClick={() => setIsSettingsOpen(false)}>×</button>
+        </div>
+        <form class="settings-form" onSubmit={saveSettings}>
+          <label>Provider
+            <select
+              value={draftSettings().provider}
+              onChange={(event) => {
+                const provider = event.currentTarget.value;
+                const firstModel = INFERENCE_PROVIDERS.find((p) => p.id === provider)?.models[0] ?? '';
+                setDraftSettings((prev) => ({ ...prev, provider, model: firstModel }));
+              }}
+            >
+              <For each={INFERENCE_PROVIDERS}>{(provider) => <option value={provider.id} disabled={provider.disabled}>{provider.label}</option>}</For>
+            </select>
+          </label>
+          <label>Model
+            <select
+              value={draftSettings().model}
+              onChange={(event) => setDraftSettings((prev) => ({ ...prev, model: event.currentTarget.value }))}
+            >
+              <For each={INFERENCE_PROVIDERS.find((p) => p.id === draftSettings().provider)?.models ?? []}>{(model) => <option value={model}>{model}</option>}</For>
+            </select>
+          </label>
+          <label>Service tier
+            <select
+              value={draftSettings().serviceTier}
+              onChange={(event) => setDraftSettings((prev) => ({ ...prev, serviceTier: event.currentTarget.value }))}
+            >
+              <For each={SERVICE_TIERS}>{(tier) => <option value={tier}>{tier}</option>}</For>
+            </select>
+          </label>
+          <label>API key
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder="Paste your provider API key"
+              value={draftSettings().apiKey}
+              onInput={(event) => setDraftSettings((prev) => ({ ...prev, apiKey: event.currentTarget.value }))}
+            />
+          </label>
+          <fieldset class="rate-limit-fieldset">
+            <legend>Rate limits</legend>
+            <label>Max concurrent requests
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={draftRateLimit().maxConcurrentRequests}
+                onInput={(event) => setDraftRateLimit((prev) => ({ ...prev, maxConcurrentRequests: Number(event.currentTarget.value) || 1 }))}
+              />
+            </label>
+            <label>Requests per second (0 = unlimited)
+              <input
+                type="number"
+                min="0"
+                step="0.1"
+                value={draftRateLimit().requestsPerSecond}
+                onInput={(event) => setDraftRateLimit((prev) => ({ ...prev, requestsPerSecond: Number(event.currentTarget.value) || 0 }))}
+              />
+            </label>
+          </fieldset>
+          <p class="settings-hint">Stored only in this browser. Google Gemini is the only provider wired up right now — the rest are placeholders.</p>
+          <button type="submit" class="primary-button">Save &amp; apply</button>
+        </form>
+      </aside>
     </Show>
   </main>;
 };
