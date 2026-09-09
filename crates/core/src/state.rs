@@ -8,6 +8,8 @@ pub struct Agent {
     pub name: String,
     pub role: String,
     pub parent_id: Option<String>,
+    pub system_prompt: String,
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

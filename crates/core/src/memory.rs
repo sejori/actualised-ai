@@ -23,4 +23,10 @@ impl MemoryManager {
         
         Ok(())
     }
+
+    pub fn write_memory(&self, agent_id: &str, file_name: &str, content: &str) -> std::io::Result<()> {
+        let memories_dir = self.base_dir.join(agent_id).join("memories");
+        std::fs::write(memories_dir.join(file_name), content)?;
+        Ok(())
+    }
 }
