@@ -1,3 +1,4 @@
+pub mod default_company;
 pub mod memory;
 pub mod orchestrator;
 pub mod sandbox;

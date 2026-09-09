@@ -1,5 +1,6 @@
 use wasm_bindgen::prelude::*;
 use actualised_core::state::{CompanyState, Agent, Project};
+use actualised_core::default_company::seed_default_company;
 use actualised_core::memory::MemoryManager;
 use actualised_core::orchestrator::Orchestrator;
 use wasm_bindgen_futures::future_to_promise;
@@ -23,6 +24,9 @@ impl OrchestratorWasm {
         // Initialize state using IndxDb
         let state = CompanyState::init("indxdb://actualised_core").await
             .map_err(|e| JsValue::from_str(&format!("State Init Error: {}", e)))?;
+        let mut state = state;
+        seed_default_company(&mut state).await
+            .map_err(|e| JsValue::from_str(&format!("Default company seed error: {}", e)))?;
             
         let memory = MemoryManager::new("/mock/memory/path")
             .map_err(|e| JsValue::from_str(&format!("Memory Init Error: {}", e)))?;
