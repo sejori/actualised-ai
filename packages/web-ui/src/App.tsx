@@ -7,6 +7,8 @@ import './App.css';
 
 type Agent = { id: string; name: string; role: string; parent_id: string | null; system_prompt: string; tools: string[] };
 type Project = { id: string; title: string; description: string };
+type Tool = { name: string; description: string; parameters: any };
+type SharedFile = { id: string; name: string; content: string };
 type HoverPosition = { x: number; y: number };
 type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string };
 type RateLimitSettings = { maxConcurrentRequests: number; requestsPerSecond: number };
@@ -94,6 +96,7 @@ const Dashboard: Component = () => {
   let inspectorRef: HTMLElement | undefined;
   let settingsRef: HTMLElement | undefined;
   let sharedRef: HTMLElement | undefined;
+  let toolsRef: HTMLElement | undefined;
   let chatScrollRef: HTMLDivElement | undefined;
   let lastFocusedNodeButton: HTMLElement | undefined;
   const [agents, setAgents] = createSignal<Agent[]>([]);
@@ -115,6 +118,11 @@ const Dashboard: Component = () => {
   const [agentContext, setAgentContext] = createSignal<AgentContext>();
   const [messageDraft, setMessageDraft] = createSignal('');
   const [error, setError] = createSignal<string>();
+  const [tools, setTools] = createSignal<Tool[]>([]);
+  const [isToolLibraryOpen, setIsToolLibraryOpen] = createSignal(false);
+  const [isEditingAgent, setIsEditingAgent] = createSignal(false);
+  const [draftAgent, setDraftAgent] = createSignal<Agent>();
+  const [isContinuousLoop, setIsContinuousLoop] = createSignal(false);
 
   const applyInferenceSettings = async (settings: InferenceSettings) => {
     try {
@@ -149,6 +157,7 @@ const Dashboard: Component = () => {
   const openSharedDirectory = async () => {
     setIsInspectorOpen(false);
     setIsSettingsOpen(false);
+    setIsToolLibraryOpen(false);
     setViewedMemory(undefined);
     setIsSharedOpen(true);
     if (!orchestrator) return;
@@ -170,9 +179,17 @@ const Dashboard: Component = () => {
   const openSettings = () => {
     setIsInspectorOpen(false);
     setIsSharedOpen(false);
+    setIsToolLibraryOpen(false);
     setDraftSettings(inferenceSettings());
     setDraftRateLimit(rateLimitSettings());
     setIsSettingsOpen(true);
+  };
+
+  const openToolLibrary = () => {
+    setIsInspectorOpen(false);
+    setIsSharedOpen(false);
+    setIsSettingsOpen(false);
+    setIsToolLibraryOpen(true);
   };
 
   const saveSettings = (event: SubmitEvent) => {
@@ -202,9 +219,22 @@ const Dashboard: Component = () => {
     }
   };
 
+  const toggleContinuousLoop = async () => {
+    if (isContinuousLoop()) {
+      setIsContinuousLoop(false);
+      return;
+    }
+    setIsContinuousLoop(true);
+    while (isContinuousLoop()) {
+      await runOrchestratorCycle();
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+  };
+
   const selectAgent = (agent: Agent, openInspector = true) => {
     setIsSettingsOpen(false);
     setIsSharedOpen(false);
+    setIsToolLibraryOpen(false);
     setSelectedAgent(agent);
     setIsInspectorOpen(openInspector);
     setMessageDraft('');
@@ -230,6 +260,7 @@ const Dashboard: Component = () => {
     if (viewedMemory()) setViewedMemory(undefined);
     else if (isSharedOpen()) setIsSharedOpen(false);
     else if (isSettingsOpen()) setIsSettingsOpen(false);
+    else if (isToolLibraryOpen()) setIsToolLibraryOpen(false);
     else if (isInspectorOpen()) setIsInspectorOpen(false);
   };
   window.addEventListener('keydown', handleKeydown);
@@ -252,6 +283,15 @@ const Dashboard: Component = () => {
   const trapInspectorTab = (event: KeyboardEvent) => trapTabWithin(inspectorRef)(event);
   const trapSettingsTab = (event: KeyboardEvent) => trapTabWithin(settingsRef)(event);
   const trapSharedTab = (event: KeyboardEvent) => trapTabWithin(sharedRef)(event);
+  const trapToolsTab = (event: KeyboardEvent) => trapTabWithin(toolsRef)(event);
+
+  createEffect(
+    () => isToolLibraryOpen(),
+    (open) => {
+      if (open) toolsRef?.querySelector<HTMLElement>('.close-button')?.focus();
+      else lastFocusedNodeButton?.focus();
+    }
+  );
 
   createEffect(
     () => isInspectorOpen(),
@@ -312,6 +352,7 @@ const Dashboard: Component = () => {
         const companyAgents = orchestrator.get_agents() as Agent[];
         setAgents(companyAgents);
         setProjects(orchestrator.get_projects() as Project[]);
+        setTools(orchestrator.get_tools() as Tool[]);
         setSelectedAgent(companyAgents[0]);
         if (companyAgents[0]) await refreshAgentDetails(companyAgents[0].id);
 
@@ -357,15 +398,33 @@ const Dashboard: Component = () => {
       <div><p class="eyebrow">Actualised.ai / company canvas</p><h1>Company structure</h1></div>
       <div class="canvas-actions">
         <span>{agents().length} agents</span>
+        <button type="button" class="icon-button" aria-label="Add Agent" onClick={async () => {
+          if (!orchestrator) return;
+          const id = `agent_${Date.now()}`;
+          await callOrchestrator(o => o.add_agent({ id, name: 'New Agent', role: 'Staff Engineer', system_prompt: 'You are a new agent.', tools: [], parent_id: selectedAgent()?.id ?? null }));
+          const companyAgents = orchestrator!.get_agents() as Agent[];
+          setAgents(companyAgents);
+          selectAgent(companyAgents.find(a => a.id === id)!, true);
+          setIsEditingAgent(true);
+          setDraftAgent(companyAgents.find(a => a.id === id)!);
+        }}>+</button>
+        <button
+          type="button"
+          class="icon-button step-button"
+          classList={{ 'is-running': isOrchestratorRunning() && !isContinuousLoop() }}
+          aria-label="Step orchestrator cycle"
+          disabled={isOrchestratorRunning()}
+          onClick={runOrchestratorCycle}
+        >⏭</button>
         <button
           type="button"
           class="icon-button play-button"
-          classList={{ 'is-running': isOrchestratorRunning() }}
-          aria-label={isOrchestratorRunning() ? 'Orchestrator cycle running' : 'Run orchestrator cycle'}
-          disabled={isOrchestratorRunning()}
-          onClick={runOrchestratorCycle}
-        >{isOrchestratorRunning() ? '⏸' : '▶'}</button>
+          classList={{ 'is-running': isContinuousLoop() }}
+          aria-label={isContinuousLoop() ? 'Pause continuous execution' : 'Start continuous execution'}
+          onClick={toggleContinuousLoop}
+        >{isContinuousLoop() ? '⏸' : '▶'}</button>
         <button type="button" class="icon-button" aria-label="Shared team directory" onClick={openSharedDirectory}>🗂</button>
+        <button type="button" class="icon-button" aria-label="Tool Library" onClick={openToolLibrary}>🛠</button>
         <button type="button" class="icon-button" aria-label="Inference settings" onClick={openSettings}>⚙</button>
         <button class="secondary-button" onClick={() => cy?.fit(undefined, 60)}>Centre canvas</button>
       </div>
@@ -395,10 +454,61 @@ const Dashboard: Component = () => {
           <div class="agent-position">{agents().findIndex(({ id }) => id === agent().id) + 1} / {agents().length}</div>
           <div class="nav-buttons"><button class="icon-button" aria-label="Previous agent" onClick={() => cycleAgent(-1)}>←</button><button class="icon-button" aria-label="Next agent" onClick={() => cycleAgent(1)}>→</button><button class="icon-button close-button" aria-label="Close details" onClick={() => setIsInspectorOpen(false)}>×</button></div>
         </div>
-        <p class="eyebrow">Agent details</p><h2>{agent().name}</h2><p class="agent-role">{agent().role}</p>
-        <div class="inspector-section"><h3>Operating brief</h3><p>{agent().system_prompt}</p></div>
-        <div class="inspector-section"><h3>Tools</h3><div class="tool-list"><For each={agent().tools}>{(tool) => <span>{tool}</span>}</For></div></div>
-        <Show when={!agent().parent_id}><div class="inspector-section"><h3>Root projects</h3><ul class="project-list"><For each={projects()}>{(project) => <li><strong>{project.title}</strong><span>{project.description}</span></li>}</For></ul></div></Show>
+        <div class="inspector-header" style="display:flex; justify-content:space-between; align-items:center;">
+          <p class="eyebrow">Agent details</p>
+          <Show when={!isEditingAgent()}>
+            <button class="secondary-button" onClick={() => { setDraftAgent({...agent()}); setIsEditingAgent(true); }}>Edit</button>
+          </Show>
+        </div>
+        
+        <Show when={!isEditingAgent()}>
+          <h2>{agent().name}</h2><p class="agent-role">{agent().role}</p>
+          <div class="inspector-section"><h3>Operating brief</h3><p>{agent().system_prompt}</p></div>
+          <div class="inspector-section"><h3>Tools</h3><div class="tool-list"><For each={agent().tools}>{(tool) => <span>{tool}</span>}</For></div></div>
+        </Show>
+        
+        <Show when={isEditingAgent()}>
+          <form onSubmit={async (e) => { 
+            e.preventDefault(); 
+            if(!orchestrator) return;
+            await callOrchestrator(o => o.update_agent(draftAgent()!.id, draftAgent()));
+            setAgents(orchestrator!.get_agents() as Agent[]);
+            setSelectedAgent(draftAgent());
+            setIsEditingAgent(false);
+          }} class="settings-form" style="margin-top: 16px;">
+            <label>Name <input required value={draftAgent()?.name} onInput={e => setDraftAgent(p => ({...p!, name: e.currentTarget.value}))} /></label>
+            <label>Role <input required value={draftAgent()?.role} onInput={e => setDraftAgent(p => ({...p!, role: e.currentTarget.value}))} /></label>
+            <label>Operating brief <textarea required value={draftAgent()?.system_prompt} rows={4} onInput={e => setDraftAgent(p => ({...p!, system_prompt: e.currentTarget.value}))} /></label>
+            <div class="inspector-section">
+              <label>Tools
+              <div class="tool-list" style="margin-bottom: 8px;">
+                <For each={draftAgent()?.tools}>{(tool) => 
+                  <span style="display:inline-flex; align-items:center; gap:4px; background:var(--bg); border:1px solid var(--border); padding:2px 8px; border-radius:4px; font-size:13px;">
+                    {tool} 
+                    <button type="button" onClick={() => setDraftAgent(p => ({...p!, tools: p!.tools.filter(t => t !== tool)}))} style="border:none; background:none; cursor:pointer; color:var(--text); padding:0;">×</button>
+                  </span>
+                }</For>
+              </div>
+                <select onChange={(e) => {
+                  const val = e.currentTarget.value;
+                  if (val && !draftAgent()?.tools.includes(val)) {
+                     setDraftAgent(p => ({...p!, tools: [...p!.tools, val]}));
+                  }
+                  e.currentTarget.value = "";
+                }}>
+                  <option value="">-- Add Tool --</option>
+                  <For each={tools()}>{(t) => <option value={t.name}>{t.name}</option>}</For>
+                </select>
+              </label>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:16px;">
+              <button type="submit" class="primary-button">Save</button>
+              <button type="button" class="secondary-button" onClick={() => setIsEditingAgent(false)}>Cancel</button>
+            </div>
+          </form>
+        </Show>
+
+        <Show when={!agent().parent_id && !isEditingAgent()}><div class="inspector-section"><h3>Root projects</h3><ul class="project-list"><For each={projects()}>{(project) => <li><strong>{project.title}</strong><span>{project.description}</span></li>}</For></ul></div></Show>
 
         <Show
           when={viewedMemory()}
@@ -450,13 +560,37 @@ const Dashboard: Component = () => {
     </Show>
 
     <Show when={isSharedOpen()}>
-      <aside ref={sharedRef} class="settings-popover shared-popover" aria-label="Shared team directory" onKeyDown={trapSharedTab}>
+      <aside ref={sharedRef} class="settings-popover shared-popover" aria-label="Shared team directory" onKeyDown={trapSharedTab}
+        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+        onDrop={async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (!orchestrator) return;
+          if (e.dataTransfer?.items) {
+            for (const item of Array.from(e.dataTransfer.items)) {
+              if (item.kind === 'file') {
+                const file = item.getAsFile();
+                if (file) {
+                  const content = await file.text();
+                  await callOrchestrator(o => o.add_shared_file({
+                    id: `file_${Date.now()}_${file.name}`,
+                    name: file.name,
+                    content
+                  }));
+                }
+              }
+            }
+            setSharedTree(await callOrchestrator((o) => o.get_shared_tree() as MemoryNode[]));
+          }
+        }}
+      >
         <div class="inspector-nav">
           <p class="eyebrow">Shared team directory</p>
           <button class="icon-button close-button" aria-label="Close shared directory" onClick={() => { setIsSharedOpen(false); setViewedMemory(undefined); }}>×</button>
         </div>
-        <Show when={sharedTree().length > 0} fallback={<p class="empty-hint">No shared files written yet.</p>}>
+        <Show when={sharedTree().length > 0} fallback={<p class="empty-hint">No shared files written yet. Drop files here to upload.</p>}>
           <MemoryTreeView nodes={sharedTree()} onOpenFile={(file) => setViewedMemory(file)} />
+          <p class="settings-hint" style="margin-top: 16px;">Drop files here to upload to the shared directory.</p>
         </Show>
         <Show when={viewedMemory()}>
           {(file) => <div class="memory-viewer">
@@ -536,6 +670,32 @@ const Dashboard: Component = () => {
           <p class="settings-hint">Stored only in this browser. Google Gemini is the only provider wired up right now — the rest are placeholders.</p>
           <button type="submit" class="primary-button">Save &amp; apply</button>
         </form>
+      </aside>
+    </Show>
+
+    <Show when={isToolLibraryOpen()}>
+      <aside ref={toolsRef} class="settings-popover" aria-label="Tool Library" onKeyDown={trapToolsTab}>
+        <div class="inspector-nav">
+          <p class="eyebrow">Tool Library</p>
+          <button class="icon-button close-button" aria-label="Close tool library" onClick={() => setIsToolLibraryOpen(false)}>×</button>
+        </div>
+        <div class="inspector-section" style="overflow-y: auto; max-height: calc(100vh - 120px);">
+          <For each={tools()}>{(tool) => 
+            <div style="margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 24px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <h3 style="margin:0;">{tool.name}</h3>
+                <button class="secondary-button" style="padding:4px 8px; font-size:12px; color:#c25b3f; border-color:#c25b3f;" onClick={async () => {
+                  if(!orchestrator) return;
+                  await callOrchestrator(o => o.remove_tool(tool.name));
+                  setTools(orchestrator!.get_tools() as Tool[]);
+                }}>Remove</button>
+              </div>
+              <p style="font-size:14px; margin-bottom:12px; line-height:1.4;">{tool.description}</p>
+              <h4 style="font-size:12px; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; color:var(--text);">Parameters (JSON Schema)</h4>
+              <pre class="memory-viewer-content" style="font-size:12px; padding:12px; background:var(--code-bg); border-radius:6px; overflow-x:auto;">{JSON.stringify(tool.parameters, null, 2)}</pre>
+            </div>
+          }</For>
+        </div>
       </aside>
     </Show>
   </main>;

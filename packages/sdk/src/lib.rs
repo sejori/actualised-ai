@@ -1,60 +1,99 @@
 #![deny(clippy::all)]
 use napi_derive::napi;
-use actualised_core::state::{Agent, CompanyState, Project};
+use actualised_core::state::{Agent, CompanyState, Project, SharedFile};
+use actualised_core::inference::Tool;
 use actualised_core::orchestrator::Orchestrator;
 use actualised_core::memory::MemoryManager;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 #[napi]
 pub struct Company {
-    state: CompanyState,
+    state: Arc<Mutex<CompanyState>>,
     state_dir: String,
 }
 
 #[napi]
 impl Company {
-    #[napi(constructor)]
-    pub fn new(name: String, mission: String, state_directory: String) -> Self {
+    #[napi]
+    pub async fn init(name: String, mission: String, state_directory: String, db_path: String) -> napi::Result<Self> {
         println!("Initializing Company: {} - Mission: {}", name, mission);
-        Self {
-            state: CompanyState::new(),
+        let state = CompanyState::init(&db_path).await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+
+        Ok(Self {
+            state: Arc::new(Mutex::new(state)),
             state_dir: state_directory,
-        }
+        })
     }
 
     #[napi]
-    pub fn add_agent(&mut self, id: String, name: String, role: String) {
-        self.state.add_agent(Agent {
-            id,
-            name,
-            role,
-            parent_id: None, // Simplified for stub
-        });
+    pub async fn add_agent(&self, agent_json: String) -> napi::Result<()> {
+        let agent: Agent = serde_json::from_str(&agent_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        self.state.lock().await.add_agent(agent).await
+            .map_err(|e| napi::Error::from_reason(e))?;
+        Ok(())
     }
 
     #[napi]
-    pub fn add_project(&mut self, id: String, title: String, description: String) {
-        self.state.add_project(Project {
-            id,
-            title,
-            description,
-        });
+    pub async fn update_agent(&self, id: String, agent_json: String) -> napi::Result<()> {
+        let agent: Agent = serde_json::from_str(&agent_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        self.state.lock().await.update_agent(&id, agent).await
+            .map_err(|e| napi::Error::from_reason(e))?;
+        Ok(())
     }
 
     #[napi]
-    pub async fn start(&mut self) -> napi::Result<()> {
+    pub async fn remove_agent(&self, id: String) -> napi::Result<()> {
+        self.state.lock().await.remove_agent(&id).await
+            .map_err(|e| napi::Error::from_reason(e))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn get_agents(&self) -> napi::Result<String> {
+        serde_json::to_string(&self.state.lock().await.agents)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    // Tools
+    #[napi]
+    pub async fn add_tool(&self, tool_json: String) -> napi::Result<()> {
+        let tool: Tool = serde_json::from_str(&tool_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        self.state.lock().await.add_tool(tool).await
+            .map_err(|e| napi::Error::from_reason(e))?;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn get_tools(&self) -> napi::Result<String> {
+        serde_json::to_string(&self.state.lock().await.tools)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn start(&self) -> napi::Result<()> {
         let mem_mgr = MemoryManager::new(&self.state_dir)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
             
-        for agent in &self.state.agents {
+        let state_guard = self.state.lock().await;
+        for agent in &state_guard.agents {
             mem_mgr.setup_agent_dir(&agent.id)
                 .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         }
 
-        let mut orch = Orchestrator::new(CompanyState {
-            agents: self.state.agents.clone(),
-            projects: self.state.projects.clone(),
-        });
-        
+        let mut cloned_state = CompanyState::init("memory").await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        cloned_state.agents = state_guard.agents.clone();
+        cloned_state.projects = state_guard.projects.clone();
+        cloned_state.tools = state_guard.tools.clone();
+        cloned_state.shared_files = state_guard.shared_files.clone();
+        drop(state_guard);
+
+        let mut orch = Orchestrator::new(cloned_state, mem_mgr);
         orch.run().await;
         Ok(())
     }

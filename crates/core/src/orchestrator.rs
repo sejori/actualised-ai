@@ -94,46 +94,9 @@ impl Orchestrator {
             println!("Staging work for agent: {} ({})", agent.name, agent.role);
             
             let mut defined_tools = Vec::new();
-            for t in &agent.tools {
-                if t == "create_sub_project" {
-                    defined_tools.push(Tool {
-                        name: "create_sub_project".to_string(),
-                        description: "Create a sub project/epic".to_string(),
-                        parameters: serde_json::json!({
-                            "type": "object",
-                            "properties": {
-                                "title": { "type": "string" },
-                                "description": { "type": "string" }
-                            },
-                            "required": ["title", "description"]
-                        }),
-                    });
-                } else if t == "write_memory" {
-                    defined_tools.push(Tool {
-                        name: "write_memory".to_string(),
-                        description: "Write content to your own memory footprint. Use '/' in file_name to organise files into folders (e.g. 'research/competitors.md').".to_string(),
-                        parameters: serde_json::json!({
-                            "type": "object",
-                            "properties": {
-                                "file_name": { "type": "string" },
-                                "content": { "type": "string" }
-                            },
-                            "required": ["file_name", "content"]
-                        }),
-                    });
-                } else if t == "write_shared_file" {
-                    defined_tools.push(Tool {
-                        name: "write_shared_file".to_string(),
-                        description: "Write a file into the shared team directory, visible to every agent in the company. Use '/' in path to organise into folders (e.g. 'engineering/api-spec.md').".to_string(),
-                        parameters: serde_json::json!({
-                            "type": "object",
-                            "properties": {
-                                "path": { "type": "string" },
-                                "content": { "type": "string" }
-                            },
-                            "required": ["path", "content"]
-                        }),
-                    });
+            for t_name in &agent.tools {
+                if let Some(tool) = self.state.tools.iter().find(|t| &t.name == t_name) {
+                    defined_tools.push(tool.clone());
                 }
             }
 

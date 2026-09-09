@@ -1,8 +1,52 @@
 use crate::state::{Agent, CompanyState, Project};
+use crate::inference::Tool;
 
 /// Creates the starter company used by new Actualised.ai workspaces: "Pawsome",
 /// a small team building an online pet store & adoption marketplace MVP.
 pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String> {
+    let tools = [
+        Tool {
+            name: "create_sub_project".to_string(),
+            description: "Create a sub project/epic".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": { "type": "string" },
+                    "description": { "type": "string" }
+                },
+                "required": ["title", "description"]
+            }),
+        },
+        Tool {
+            name: "write_memory".to_string(),
+            description: "Write content to your own memory footprint. Use '/' in file_name to organise files into folders (e.g. 'research/competitors.md').".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_name": { "type": "string" },
+                    "content": { "type": "string" }
+                },
+                "required": ["file_name", "content"]
+            }),
+        },
+        Tool {
+            name: "write_shared_file".to_string(),
+            description: "Write a file into the shared team directory, visible to every agent in the company. Use '/' in path to organise into folders (e.g. 'engineering/api-spec.md').".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string" },
+                    "content": { "type": "string" }
+                },
+                "required": ["path", "content"]
+            }),
+        }
+    ];
+
+    for t in tools {
+        state.add_tool(t).await?;
+    }
+
     let agents = [
         Agent {
             id: "node_eng_lead".to_string(),
