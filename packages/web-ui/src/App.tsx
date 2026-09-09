@@ -1,4 +1,5 @@
-import { Component, createSignal, onMount, Show } from 'solid-js';
+import { createSignal, createEffect, Show } from 'solid-js';
+import type { Component } from 'solid-js';
 import cytoscape from 'cytoscape';
 // @ts-ignore
 import initWasm, { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
@@ -6,7 +7,7 @@ import initWasm, { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
 const Dashboard: Component = () => {
   let cyContainer!: HTMLDivElement;
 
-  onMount(async () => {
+  createEffect(async () => {
     // Initialize WASM
     try {
       await initWasm();
