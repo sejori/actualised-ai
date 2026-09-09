@@ -1,20 +1,7 @@
 import { createSignal, onSettled, Show } from 'solid-js';
 import type { Component } from 'solid-js';
 import cytoscape from 'cytoscape';
-
-type WasmModule = {
-  default: () => Promise<unknown>;
-  OrchestratorWasm: { init: () => Promise<unknown> };
-};
-
-async function initializeWasm() {
-  // The generated wasm-bindgen files are optional during frontend-only development.
-  // Keep them in public/wasm when they are available so Vite can serve them unchanged.
-  const moduleUrl = `${import.meta.env.BASE_URL}wasm/actualised_core_wasm.js`;
-  const wasm = await import(/* @vite-ignore */ moduleUrl) as WasmModule;
-  await wasm.default();
-  return wasm.OrchestratorWasm.init();
-}
+import initWasm, { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
 
 const Dashboard: Component = () => {
   let cyContainer!: HTMLDivElement;
@@ -23,8 +10,9 @@ const Dashboard: Component = () => {
     (async () => {
       // Initialize WASM
       try {
-        const orchestrator = await initializeWasm();
+        await initWasm();
         console.log("WASM Initialized Successfully");
+        const orchestrator = await OrchestratorWasm.init();
         console.log("Orchestrator created", orchestrator);
       } catch (e) {
         console.error("Failed to load WASM or initialize orchestrator", e);
