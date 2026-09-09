@@ -20,3 +20,4 @@ actualised_state/
 # OS Files
 .DS_Store
 Thumbs.db
+.vscode

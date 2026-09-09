@@ -1,4 +1,4 @@
-import { createSignal, For, onCleanup, onSettled, Show } from 'solid-js';
+import { createEffect, createSignal, For, onCleanup, onSettled, Show } from 'solid-js';
 import type { Component } from 'solid-js';
 import cytoscape from 'cytoscape';
 import type { Core, ElementDefinition } from 'cytoscape';
@@ -21,6 +21,8 @@ function graphElements(agents: Agent[]): ElementDefinition[] {
 const Dashboard: Component = () => {
   let cyContainer!: HTMLDivElement;
   let cy: Core | undefined;
+  let inspectorRef: HTMLElement | undefined;
+  let lastFocusedNodeButton: HTMLElement | undefined;
   const [agents, setAgents] = createSignal<Agent[]>([]);
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [selectedAgent, setSelectedAgent] = createSignal<Agent>();
@@ -32,8 +34,12 @@ const Dashboard: Component = () => {
   const selectAgent = (agent: Agent, openInspector = true) => {
     setSelectedAgent(agent);
     setIsInspectorOpen(openInspector);
+    cy?.nodes('.selected').removeClass('selected');
     const node = cy?.$id(agent.id);
-    if (node) cy?.animate({ center: { eles: node }, duration: 180 });
+    if (node) {
+      node.addClass('selected');
+      cy?.animate({ center: { eles: node }, duration: 180 });
+    }
   };
 
   const cycleAgent = (direction: 1 | -1) => {
@@ -42,6 +48,38 @@ const Dashboard: Component = () => {
     const nextIndex = (currentIndex + direction + companyAgents.length) % companyAgents.length;
     selectAgent(companyAgents[nextIndex]);
   };
+
+  const handleKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && isInspectorOpen()) setIsInspectorOpen(false);
+  };
+  window.addEventListener('keydown', handleKeydown);
+  onCleanup(() => window.removeEventListener('keydown', handleKeydown));
+
+  const trapInspectorTab = (event: KeyboardEvent) => {
+    if (event.key !== 'Tab' || !inspectorRef) return;
+    const focusable = inspectorRef.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  createEffect(
+    () => isInspectorOpen(),
+    (open) => {
+      if (open) {
+        inspectorRef?.querySelector<HTMLElement>('.close-button')?.focus();
+      } else {
+        lastFocusedNodeButton?.focus();
+      }
+    },
+  );
 
   onSettled(() => {
     void (async () => {
@@ -61,6 +99,7 @@ const Dashboard: Component = () => {
             { selector: 'node.root', style: { 'background-color': '#f4b8a8', 'border-color': '#a56354', width: 56, height: 56 } },
             { selector: 'node.lead', style: { 'background-color': '#d9c4e9', 'border-color': '#866b9c', width: 50, height: 50 } },
             { selector: 'node.contributor', style: { 'background-color': '#b9d8d1', 'border-color': '#568b80' } },
+            { selector: 'node.selected', style: { 'border-width': 4, 'border-color': '#c25b3f', 'overlay-opacity': 0 } },
             { selector: 'edge', style: { width: 1.5, 'line-color': '#9d9789', 'target-arrow-color': '#9d9789', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
           ],
           layout: { name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.25 },
@@ -79,6 +118,7 @@ const Dashboard: Component = () => {
           }
         });
         cy.on('mouseout', 'node', () => setHoveredAgent());
+        cy.$id(companyAgents[0]?.id).addClass('selected');
       } catch (cause) {
         console.error('Failed to initialise the company dashboard', cause);
         setError(cause instanceof Error ? cause.message : 'Unknown initialization error');
@@ -97,12 +137,23 @@ const Dashboard: Component = () => {
 
     <section class="canvas-shell" aria-label="Navigable company tree">
       <div ref={cyContainer} class="company-canvas" />
-      <p class="canvas-hint">Drag to explore · Scroll to zoom · Select an agent to inspect</p>
+      <p class="canvas-hint">Drag to explore · Scroll to zoom · Tab to an agent, Enter to inspect</p>
       <Show when={hoveredAgent()}>{(agent) => <div class="node-tooltip" style={{ left: `${hoverPosition().x}px`, top: `${hoverPosition().y}px` }}><strong>{agent().name}</strong><span>{agent().role}</span></div>}</Show>
+      <div class="graph-focus-nodes">
+        <For each={agents()}>
+          {(agent) => <button
+            type="button"
+            class="graph-node-button"
+            aria-current={selectedAgent()?.id === agent.id}
+            onFocus={(event) => { selectAgent(agent, false); lastFocusedNodeButton = event.currentTarget; }}
+            onClick={(event) => { selectAgent(agent, true); lastFocusedNodeButton = event.currentTarget; }}
+          >{agent.name} — {agent.role}</button>}
+        </For>
+      </div>
     </section>
 
     <Show when={isInspectorOpen() && selectedAgent()}>
-      {(agent) => <aside class="agent-inspector" aria-label={`${agent().name} details`}>
+      {(agent) => <aside ref={inspectorRef} class="agent-inspector" aria-label={`${agent().name} details`} onKeyDown={trapInspectorTab}>
         <div class="inspector-nav">
           <div class="agent-position">{agents().findIndex(({ id }) => id === agent().id) + 1} / {agents().length}</div>
           <div class="nav-buttons"><button class="icon-button" aria-label="Previous agent" onClick={() => cycleAgent(-1)}>←</button><button class="icon-button" aria-label="Next agent" onClick={() => cycleAgent(1)}>→</button><button class="icon-button close-button" aria-label="Close details" onClick={() => setIsInspectorOpen(false)}>×</button></div>
