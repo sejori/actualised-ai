@@ -1,9 +1,14 @@
 terraform {
+  required_version = ">= 1.0.0"
   required_providers {
     google = {
       source  = "hashicorp/google"
       version = "~> 5.0"
     }
+  }
+  backend "gcs" {
+    bucket  = "gen-lang-client-0676741409-tfstate"
+    prefix  = "terraform/state"
   }
 }
 
