@@ -109,3 +109,60 @@ impl InferenceEngine for GeminiInferenceEngine {
         Err("Failed to parse Gemini response parts".to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_tool_serialization() {
+        let tool = Tool {
+            name: "test_tool".to_string(),
+            description: "A test tool".to_string(),
+            parameters: json!({ "type": "object" }),
+        };
+        let serialized = serde_json::to_string(&tool).unwrap();
+        assert!(serialized.contains("test_tool"));
+    }
+
+    #[test]
+    fn test_tool_call_serialization() {
+        let call = ToolCall {
+            id: "call_123".to_string(),
+            name: "do_work".to_string(),
+            args: json!({ "target": "main.rs" }),
+        };
+        let serialized = serde_json::to_string(&call).unwrap();
+        assert!(serialized.contains("call_123"));
+    }
+
+    #[tokio::test]
+    async fn test_mock_engine_text() {
+        let engine = MockInferenceEngine;
+        let res = engine.generate_response("sys", "user", vec![]).await.unwrap();
+        if let InferenceResponse::Text(t) = res {
+            assert!(t.contains("[MOCK INFERENCE RESPONSE]"));
+        } else {
+            panic!("Expected Text response");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mock_engine_tool() {
+        let engine = MockInferenceEngine;
+        let tool = Tool {
+            name: "mock_tool".to_string(),
+            description: "mock desc".to_string(),
+            parameters: json!({}),
+        };
+        let res = engine.generate_response("sys", "user", vec![tool]).await.unwrap();
+        if let InferenceResponse::ToolCalls(calls) = res {
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "mock_tool");
+        } else {
+            panic!("Expected ToolCalls response");
+        }
+    }
+}
+
