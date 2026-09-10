@@ -13,13 +13,14 @@ COPY packages/ packages/
 
 # Build napi addon
 WORKDIR /app/packages/sdk
-RUN npm install
-RUN npm run build
+RUN npm install -g pnpm
+RUN pnpm install
+RUN pnpm run build
 
 # Build Web UI
 WORKDIR /app/packages/web-ui
-RUN npm install
-RUN npm run build
+RUN pnpm install
+RUN pnpm run build
 
 FROM node:20-slim
 WORKDIR /app
@@ -30,9 +31,10 @@ COPY --from=builder /app/packages/web-ui/dist /app/packages/web-ui/dist
 
 WORKDIR /app/packages/sdk
 
-RUN npm install
+RUN npm install -g pnpm
+RUN pnpm install
 
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["npx", "tsx", "examples/server.ts"]
+CMD ["pnpm", "exec", "tsx", "examples/server.ts"]
