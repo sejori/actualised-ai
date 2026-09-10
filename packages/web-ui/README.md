@@ -23,6 +23,10 @@ It correctly bundles Solid in production mode and optimizes the build for the be
 The build is minified and the filenames include the hashes.<br>
 Your app is ready to be deployed!
 
-## Deployment
+## Runtime modes
 
-Learn more about deploying your application with the [documentations](https://vite.dev/guide/static-deploy.html)
+The default build runs the orchestrator locally in browser WASM. This is used for local development and the standalone GitHub Pages demo.
+
+The Cloud Run `build:cloud` script uses the same-origin `/api` endpoints and SSE stream backed by the native SDK, so browser actions and Telegram messages share one persisted company state.
+
+The `build:pages` script emits the `/actualised-ai/` base path for GitHub Pages. Cloud Run and local builds serve from `/`.

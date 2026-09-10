@@ -2,8 +2,10 @@ use crate::state::{Agent, CompanyState, Project};
 use crate::inference::Tool;
 
 /// Creates the starter company used by new Actualised.ai workspaces: "Pawsome",
-/// a small team building an online pet store & adoption marketplace MVP.
+/// led by a Project Manager coordinating Product, Engineering, and Growth.
 pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String> {
+    state.set_company_name("Pawsome".to_string()).await?;
+
     let tools = [
         Tool {
             name: "create_sub_project".to_string(),
@@ -49,10 +51,21 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
 
     let agents = [
         Agent {
+            id: "node_project_manager".to_string(),
+            name: "Project Manager".to_string(),
+            role: "Company Orchestrator".to_string(),
+            parent_id: None,
+            system_prompt: "You are the Project Manager at Pawsome. Coordinate the Engineering, Product, and Growth leads, turn operator messages into clear priorities, and keep the three teams aligned around the MVP. Use create_sub_project to break down cross-team work and write_shared_file to publish company-wide decisions.".to_string(),
+            tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
+            telemetry: None,
+            scheduled_tasks: None,
+            pending_messages: None,
+        },
+        Agent {
             id: "node_eng_lead".to_string(),
             name: "Engineering Lead".to_string(),
             role: "Lead Engineer".to_string(),
-            parent_id: None,
+            parent_id: Some("node_project_manager".to_string()),
             system_prompt: "You are the Engineering Lead at Pawsome, an online pet store and adoption marketplace. Break down the platform (product catalog, checkout, adoption listings) into epics for your reports, Frontend Engineer and Backend Engineer, using create_sub_project. Publish the technical roadmap to the shared team directory with write_shared_file at 'engineering/roadmap.md' so Product and Growth can see it.".to_string(),
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,
@@ -85,7 +98,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             id: "node_product_lead".to_string(),
             name: "Product Lead".to_string(),
             role: "Product Manager".to_string(),
-            parent_id: None,
+            parent_id: Some("node_project_manager".to_string()),
             system_prompt: "You are the Product Lead at Pawsome. Define the MVP requirements: browsing the pet/product catalog, checkout, and the adoption application flow. Assign design work to the Designer with create_sub_project, and publish the product spec to the shared team directory with write_shared_file at 'product/mvp-spec.md'.".to_string(),
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,
@@ -107,7 +120,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             id: "node_growth_lead".to_string(),
             name: "Growth Lead".to_string(),
             role: "Marketing Director".to_string(),
-            parent_id: None,
+            parent_id: Some("node_project_manager".to_string()),
             system_prompt: "You are the Growth Lead at Pawsome. Plan the launch campaign for the pet store and adoption marketplace. Use create_sub_project to document campaigns, and publish the go-to-market plan to the shared team directory with write_shared_file at 'growth/launch-plan.md'.".to_string(),
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,

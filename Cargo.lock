@@ -3681,6 +3681,7 @@ dependencies = [
  "revision",
  "ring 0.17.14",
  "rust_decimal",
+ "rustls",
  "semver",
  "serde",
  "serde_json",
@@ -4162,8 +4163,11 @@ checksum = "212d5dcb2a1ce06d81107c3d0ffa3121fe974b73f068c8282cb1c32328113b6c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -4278,6 +4282,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.8",
+ "rustls",
  "sha1",
  "thiserror 1.0.69",
  "url",

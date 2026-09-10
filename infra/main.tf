@@ -31,6 +31,17 @@ resource "google_cloud_run_v2_service" "orchestrator" {
     containers {
       image = var.orchestrator_image
 
+      startup_probe {
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+        initial_delay_seconds = 1
+        timeout_seconds       = 2
+        period_seconds        = 5
+        failure_threshold     = 12
+      }
+
       env {
         name  = "SURREALDB_URL"
         value = var.surrealdb_url

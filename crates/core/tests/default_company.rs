@@ -12,8 +12,27 @@ async fn default_company_has_the_expected_teams_and_projects() {
         .await
         .expect("default company should seed");
 
-    assert_eq!(state.agents.len(), 7);
+    assert_eq!(state.company_name.as_deref(), Some("Pawsome"));
+    assert_eq!(state.agents.len(), 8);
     assert_eq!(state.projects.len(), 2);
+    assert_eq!(
+        state
+            .agents
+            .iter()
+            .find(|agent| agent.id == "node_project_manager")
+            .and_then(|agent| agent.parent_id.as_deref()),
+        None
+    );
+    for lead_id in ["node_eng_lead", "node_product_lead", "node_growth_lead"] {
+        assert_eq!(
+            state
+                .agents
+                .iter()
+                .find(|agent| agent.id == lead_id)
+                .and_then(|agent| agent.parent_id.as_deref()),
+            Some("node_project_manager")
+        );
+    }
     assert_eq!(
         state
             .agents

@@ -51,7 +51,7 @@ jobs:
       - name: Build Web UI
         run: |
           cd packages/web-ui
-          pnpm run build
+          pnpm run build:pages
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

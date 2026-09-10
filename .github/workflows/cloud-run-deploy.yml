@@ -58,11 +58,13 @@ jobs:
 
       - name: Build Web UI
         working-directory: packages/web-ui
-        run: pnpm run build
+        run: pnpm run build:cloud
 
       - name: Build SDK (N-API)
         working-directory: packages/sdk
-        run: pnpm run build
+        run: |
+          pnpm run typecheck
+          pnpm run build
 
       - name: Build and Push Docker Image
         run: |

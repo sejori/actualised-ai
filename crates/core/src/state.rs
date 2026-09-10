@@ -8,6 +8,15 @@ use surrealdb::engine::any::{connect, Any};
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb::opt::auth::Root;
 
+#[cfg(not(target_arch = "wasm32"))]
+fn record_content<T: Serialize>(value: &T) -> Result<serde_json::Value, String> {
+    let mut content = serde_json::to_value(value).map_err(|e| e.to_string())?;
+    if let serde_json::Value::Object(fields) = &mut content {
+        fields.remove("id");
+    }
+    Ok(content)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct AgentTelemetry {
     pub prompt_tokens: usize,
@@ -60,6 +69,7 @@ pub struct CompanyState {
     pub projects: Vec<Project>,
     pub tools: Vec<Tool>,
     pub shared_files: Vec<SharedFile>,
+    pub company_name: Option<String>,
 }
 
 impl CompanyState {
@@ -81,13 +91,29 @@ impl CompanyState {
         }
 
         db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
+
+        let mut response = db.query(
+            "SELECT meta::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent;
+             SELECT meta::id(id) AS id, title, description FROM project;
+             SELECT name, description, parameters FROM tool;
+             SELECT meta::id(id) AS id, name, content FROM shared_file;
+             SELECT VALUE name FROM company LIMIT 1"
+        )
+            .await
+            .map_err(|e| e.to_string())?;
+        let agents = response.take::<Vec<Agent>>(0).map_err(|e| e.to_string())?;
+        let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
+        let tools = response.take::<Vec<Tool>>(2).map_err(|e| e.to_string())?;
+        let shared_files = response.take::<Vec<SharedFile>>(3).map_err(|e| e.to_string())?;
+        let company_name = response.take::<Vec<String>>(4).map_err(|e| e.to_string())?.into_iter().next();
         
         Ok(Self {
             db,
-            agents: Vec::new(),
-            projects: Vec::new(),
-            tools: Vec::new(),
-            shared_files: Vec::new(),
+            agents,
+            projects,
+            tools,
+            shared_files,
+            company_name,
         })
     }
 
@@ -98,7 +124,20 @@ impl CompanyState {
             projects: Vec::new(),
             tools: Vec::new(),
             shared_files: Vec::new(),
+            company_name: None,
         })
+    }
+
+    pub async fn set_company_name(&mut self, name: String) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.db
+            .query("UPDATE company:main SET name = $name")
+            .bind(("name", &name))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+
+        self.company_name = Some(name);
+        Ok(())
     }
 
     // --- Agents ---
@@ -123,11 +162,13 @@ impl CompanyState {
 
         #[cfg(not(target_arch = "wasm32"))]
         for ag in updates_needed {
+            let content = record_content(&ag)?;
             let mut _res = self.db
                 .query("UPDATE type::thing('agent', $id) CONTENT $agent")
                 .bind(("id", &ag.id))
-                .bind(("agent", &ag))
-                .await.map_err(|e| e.to_string())?;
+                .bind(("agent", content))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
         }
 
         Ok(())
@@ -161,11 +202,13 @@ impl CompanyState {
 
         #[cfg(not(target_arch = "wasm32"))]
         for ag in updates_needed {
+            let content = record_content(&ag)?;
             let mut _res = self.db
                 .query("UPDATE type::thing('agent', $id) CONTENT $agent")
                 .bind(("id", &ag.id))
-                .bind(("agent", &ag))
-                .await.map_err(|e| e.to_string())?;
+                .bind(("agent", content))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
         }
 
         Ok(())
@@ -207,14 +250,17 @@ impl CompanyState {
             let mut _res = self.db
                 .query("DELETE type::thing('agent', $id)")
                 .bind(("id", id))
-                .await.map_err(|e| e.to_string())?;
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
 
             for ag in updates_needed {
+                let content = record_content(&ag)?;
                 let mut _res = self.db
                     .query("UPDATE type::thing('agent', $id) CONTENT $agent")
                     .bind(("id", &ag.id))
-                    .bind(("agent", &ag))
-                    .await.map_err(|e| e.to_string())?;
+                    .bind(("agent", content))
+                    .await.map_err(|e| e.to_string())?
+                    .check().map_err(|e| e.to_string())?;
             }
         }
 
@@ -226,11 +272,13 @@ impl CompanyState {
     pub async fn add_project(&mut self, project: Project) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let content = record_content(&project)?;
             let mut _res = self.db
                 .query("CREATE type::thing('project', $id) CONTENT $project")
                 .bind(("id", &project.id))
-                .bind(("project", &project))
-                .await.map_err(|e| e.to_string())?;
+                .bind(("project", content))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
         }
             
         self.projects.push(project);
@@ -240,12 +288,28 @@ impl CompanyState {
     // --- Tools ---
 
     pub async fn add_tool(&mut self, tool: Tool) -> Result<(), String> {
-        // In a real DB we'd store these. For now, in-memory array is synced.
+        #[cfg(not(target_arch = "wasm32"))]
+        self.db
+            .query("UPDATE type::thing('tool', $id) CONTENT $tool")
+            .bind(("id", &tool.name))
+            .bind(("tool", &tool))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+
         self.tools.push(tool);
         Ok(())
     }
 
     pub async fn update_tool(&mut self, name: &str, new_tool: Tool) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.db
+            .query("DELETE type::thing('tool', $old_id); UPDATE type::thing('tool', $id) CONTENT $tool")
+            .bind(("old_id", name))
+            .bind(("id", &new_tool.name))
+            .bind(("tool", &new_tool))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+
         if let Some(idx) = self.tools.iter().position(|t| t.name == name) {
             self.tools[idx] = new_tool;
         }
@@ -253,6 +317,13 @@ impl CompanyState {
     }
 
     pub async fn remove_tool(&mut self, name: &str) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.db
+            .query("DELETE type::thing('tool', $id)")
+            .bind(("id", name))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+
         self.tools.retain(|t| t.name != name);
         Ok(())
     }
@@ -260,11 +331,29 @@ impl CompanyState {
     // --- Shared Files ---
 
     pub async fn add_shared_file(&mut self, file: SharedFile) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = record_content(&file)?;
+            self.db
+                .query("UPDATE type::thing('shared_file', $id) CONTENT $file")
+                .bind(("id", &file.id))
+                .bind(("file", content))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
+        }
+
         self.shared_files.push(file);
         Ok(())
     }
 
     pub async fn remove_shared_file(&mut self, id: &str) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.db
+            .query("DELETE type::thing('shared_file', $id)")
+            .bind(("id", id))
+            .await.map_err(|e| e.to_string())?
+            .check().map_err(|e| e.to_string())?;
+
         self.shared_files.retain(|f| f.id != id);
         Ok(())
     }
@@ -288,16 +377,13 @@ mod tests {
         }
     }
 
+    async fn create_state() -> CompanyState {
+        CompanyState::init("mem://").await.unwrap()
+    }
+
     #[tokio::test]
     async fn test_first_agent_is_root() {
-        let mut state = CompanyState {
-            #[cfg(not(target_arch = "wasm32"))]
-            db: surrealdb::engine::any::connect("mem://").await.unwrap(),
-            agents: vec![],
-            projects: vec![],
-            tools: vec![],
-            shared_files: vec![],
-        };
+        let mut state = create_state().await;
 
         // Added with a parent, but it's the first agent, so it should be forced to root
         let agent1 = create_agent("agent1", Some("some_parent"));
@@ -309,14 +395,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_second_root_swaps_first() {
-        let mut state = CompanyState {
-            #[cfg(not(target_arch = "wasm32"))]
-            db: surrealdb::engine::any::connect("mem://").await.unwrap(),
-            agents: vec![],
-            projects: vec![],
-            tools: vec![],
-            shared_files: vec![],
-        };
+        let mut state = create_state().await;
 
         state.add_agent(create_agent("agent1", None)).await.unwrap();
         // Add a second root
@@ -334,14 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_agent_to_root_swaps_current_root() {
-        let mut state = CompanyState {
-            #[cfg(not(target_arch = "wasm32"))]
-            db: surrealdb::engine::any::connect("mem://").await.unwrap(),
-            agents: vec![],
-            projects: vec![],
-            tools: vec![],
-            shared_files: vec![],
-        };
+        let mut state = create_state().await;
 
         state.add_agent(create_agent("root", None)).await.unwrap();
         state.add_agent(create_agent("child", Some("root"))).await.unwrap();
@@ -359,14 +431,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_root_with_manager_promotes_manager() {
-        let mut state = CompanyState {
-            #[cfg(not(target_arch = "wasm32"))]
-            db: surrealdb::engine::any::connect("mem://").await.unwrap(),
-            agents: vec![],
-            projects: vec![],
-            tools: vec![],
-            shared_files: vec![],
-        };
+        let mut state = create_state().await;
 
         state.add_agent(create_agent("root", None)).await.unwrap();
         state.add_agent(create_agent("manager", Some("root"))).await.unwrap();
@@ -384,14 +449,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_root_promotes_child() {
-        let mut state = CompanyState {
-            #[cfg(not(target_arch = "wasm32"))]
-            db: surrealdb::engine::any::connect("mem://").await.unwrap(),
-            agents: vec![],
-            projects: vec![],
-            tools: vec![],
-            shared_files: vec![],
-        };
+        let mut state = create_state().await;
 
         state.add_agent(create_agent("root", None)).await.unwrap();
         state.add_agent(create_agent("child1", Some("root"))).await.unwrap();
@@ -411,14 +469,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_intermediate_node_orphans_to_grandparent() {
-        let mut state = CompanyState {
-            #[cfg(not(target_arch = "wasm32"))]
-            db: surrealdb::engine::any::connect("mem://").await.unwrap(),
-            agents: vec![],
-            projects: vec![],
-            tools: vec![],
-            shared_files: vec![],
-        };
+        let mut state = create_state().await;
 
         state.add_agent(create_agent("root", None)).await.unwrap();
         state.add_agent(create_agent("middle", Some("root"))).await.unwrap();

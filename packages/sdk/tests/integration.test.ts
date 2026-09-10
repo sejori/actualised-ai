@@ -1,15 +1,17 @@
-import test from 'node:test';
-import assert from 'node:assert';
+import { describe, expect, it } from 'vitest';
 import { ActualisedClient } from '../src/index';
 
-test('Actualised SDK Integration', async (t) => {
-  await t.test('should initialize and get agents', async () => {
+describe('Actualised SDK Integration', () => {
+  it('should found a company and get seeded agents', async () => {
     const client = await ActualisedClient.create('mem://');
+    expect(await client.getCompanyName()).toBeNull();
+    await client.foundCompany('Test Venture');
     const agents = await client.getAgents();
-    assert.strictEqual(Array.isArray(agents), true);
+    expect(await client.getCompanyName()).toBe('Test Venture');
+    expect(agents).toHaveLength(8);
   });
 
-  await t.test('should register and execute a custom tool', async () => {
+  it('should register and execute a custom tool', async () => {
     const client = await ActualisedClient.create('mem://');
 
     const customTool = {
@@ -22,20 +24,23 @@ test('Actualised SDK Integration', async (t) => {
         }
       }
     };
-    await (client as any).company.addTool(JSON.stringify(customTool));
+    await client.addTool(customTool);
 
     const agent = {
       id: 'agent_1',
       name: 'Test Agent',
       role: 'Tester',
       system_prompt: 'You are a test agent',
-      tools: ['calculate_tax']
+      tools: ['calculate_tax'],
+      telemetry: null,
+      scheduled_tasks: null,
+      pending_messages: null,
     };
     await client.addAgent(agent);
 
     let executedTool = false;
 
-    client.registerToolExecutor(async (agentId, toolName, argsJson) => {
+    client.registerToolExecutor((_agentId, toolName, _argsJson) => {
       if (toolName === 'calculate_tax') {
         executedTool = true;
         return 'Tax calculated successfully';
@@ -44,6 +49,6 @@ test('Actualised SDK Integration', async (t) => {
     });
 
     await client.start();
-    assert.strictEqual(executedTool, true);
+    expect(executedTool).toBe(true);
   });
 });

@@ -69,6 +69,26 @@ impl OrchestratorWasm {
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
     }
 
+    #[wasm_bindgen]
+    pub fn get_company_name(&self) -> Option<String> {
+        self.inner.state.company_name.clone()
+    }
+
+    #[wasm_bindgen]
+    pub async fn found_company(&mut self, name: String) -> Result<(), JsValue> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(JsValue::from_str("Company name is required"));
+        }
+        if self.inner.state.company_name.is_some() || !self.inner.state.agents.is_empty() {
+            return Err(JsValue::from_str("A company already exists"));
+        }
+        seed_default_company(&mut self.inner.state).await
+            .map_err(|e| JsValue::from_str(&format!("Default company seed error: {}", e)))?;
+        self.inner.state.set_company_name(name.to_string()).await
+            .map_err(|e| JsValue::from_str(&format!("Company name error: {}", e)))
+    }
+
     // --- Tools ---
 
     #[wasm_bindgen]

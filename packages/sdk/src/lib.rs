@@ -1,9 +1,10 @@
 #![deny(clippy::all)]
 use napi_derive::napi;
-use actualised_core::state::{Agent, CompanyState};
-use actualised_core::inference::Tool;
+use actualised_core::state::{Agent, CompanyState, SharedFile};
+use actualised_core::inference::{build_engine, Tool};
 use actualised_core::orchestrator::Orchestrator;
 use actualised_core::memory::MemoryManager;
+use actualised_core::default_company::seed_default_company;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -11,9 +12,7 @@ use async_trait::async_trait;
 
 #[napi]
 pub struct Company {
-    state: Arc<Mutex<CompanyState>>,
-    state_dir: String,
-    rate_limit: Arc<Mutex<actualised_core::queue::RateLimitConfig>>,
+    orchestrator: Arc<Mutex<Orchestrator>>,
     tool_executor: Option<Arc<JsToolExecutor>>,
 }
 
@@ -39,18 +38,47 @@ impl Company {
     #[napi]
     pub async fn init(name: String, mission: String, state_directory: String, db_path: String) -> napi::Result<Self> {
         println!("Initializing Company: {} - Mission: {}", name, mission);
-        let state = CompanyState::init(&db_path).await
+        let mut state = CompanyState::init(&db_path).await
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        if !state.agents.is_empty() && state.company_name.is_none() {
+            state.set_company_name("Pawsome".to_string()).await
+                .map_err(napi::Error::from_reason)?;
+        }
+        let memory = MemoryManager::new(&state_directory)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        for agent in &state.agents {
+            memory.setup_agent_dir(&agent.id)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        }
 
         Ok(Self {
-            state: Arc::new(Mutex::new(state)),
-            state_dir: state_directory,
-            rate_limit: Arc::new(Mutex::new(actualised_core::queue::RateLimitConfig::default())),
+            orchestrator: Arc::new(Mutex::new(Orchestrator::new(state, memory))),
             tool_executor: None,
         })
     }
 
-    #[napi(ts_args_type = "executor: (agentId: string, toolName: string, argsJson: string) => Promise<string>")]
+    #[napi]
+    pub async fn get_company_name(&self) -> Option<String> {
+        self.orchestrator.lock().await.state.company_name.clone()
+    }
+
+    #[napi]
+    pub async fn found_company(&self, name: String) -> napi::Result<()> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(napi::Error::from_reason("Company name is required"));
+        }
+        let mut orchestrator = self.orchestrator.lock().await;
+        if orchestrator.state.company_name.is_some() || !orchestrator.state.agents.is_empty() {
+            return Err(napi::Error::from_reason("A company already exists"));
+        }
+        seed_default_company(&mut orchestrator.state).await
+            .map_err(napi::Error::from_reason)?;
+        orchestrator.state.set_company_name(name.to_string()).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi(ts_args_type = "executor: (agentId: string, toolName: string, argsJson: string) => string")]
     pub fn register_tool_executor(&mut self, executor: napi::JsFunction) -> napi::Result<()> {
         use napi::threadsafe_function::{ThreadsafeFunction, ErrorStrategy};
         let tsfn: ThreadsafeFunction<(String, String, String), ErrorStrategy::Fatal> = executor.create_threadsafe_function(0, |ctx| {
@@ -68,13 +96,23 @@ impl Company {
 
     #[napi]
     pub async fn set_pacing(&self, requests_per_minute: f64, working_hours_start: Option<String>, working_hours_end: Option<String>) -> napi::Result<()> {
-        let mut rl = self.rate_limit.lock().await;
+        let mut orchestrator = self.orchestrator.lock().await;
+        let mut rl = orchestrator.rate_limit.clone();
         rl.requests_per_minute = requests_per_minute;
         if let (Some(s), Some(e)) = (working_hours_start, working_hours_end) {
             rl.working_hours = Some((s, e));
         } else {
             rl.working_hours = None;
         }
+        orchestrator.set_rate_limit(rl);
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn configure_inference(&self, config_json: String) -> napi::Result<()> {
+        let config = serde_json::from_str(&config_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        self.orchestrator.lock().await.set_inference(build_engine(&config));
         Ok(())
     }
 
@@ -82,7 +120,7 @@ impl Company {
     pub async fn add_agent(&self, agent_json: String) -> napi::Result<()> {
         let agent: Agent = serde_json::from_str(&agent_json)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        self.state.lock().await.add_agent(agent).await
+        self.orchestrator.lock().await.state.add_agent(agent).await
             .map_err(|e| napi::Error::from_reason(e))?;
         Ok(())
     }
@@ -91,21 +129,27 @@ impl Company {
     pub async fn update_agent(&self, id: String, agent_json: String) -> napi::Result<()> {
         let agent: Agent = serde_json::from_str(&agent_json)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        self.state.lock().await.update_agent(&id, agent).await
+        self.orchestrator.lock().await.state.update_agent(&id, agent).await
             .map_err(|e| napi::Error::from_reason(e))?;
         Ok(())
     }
 
     #[napi]
     pub async fn remove_agent(&self, id: String) -> napi::Result<()> {
-        self.state.lock().await.remove_agent(&id).await
+        self.orchestrator.lock().await.state.remove_agent(&id).await
             .map_err(|e| napi::Error::from_reason(e))?;
         Ok(())
     }
 
     #[napi]
     pub async fn get_agents(&self) -> napi::Result<String> {
-        serde_json::to_string(&self.state.lock().await.agents)
+        serde_json::to_string(&self.orchestrator.lock().await.state.agents)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn get_projects(&self) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.state.projects)
             .map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 
@@ -114,57 +158,65 @@ impl Company {
     pub async fn add_tool(&self, tool_json: String) -> napi::Result<()> {
         let tool: Tool = serde_json::from_str(&tool_json)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        self.state.lock().await.add_tool(tool).await
+        self.orchestrator.lock().await.state.add_tool(tool).await
             .map_err(|e| napi::Error::from_reason(e))?;
         Ok(())
     }
 
     #[napi]
     pub async fn get_tools(&self) -> napi::Result<String> {
-        serde_json::to_string(&self.state.lock().await.tools)
+        serde_json::to_string(&self.orchestrator.lock().await.state.tools)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn remove_tool(&self, name: String) -> napi::Result<()> {
+        self.orchestrator.lock().await.state.remove_tool(&name).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn add_shared_file(&self, file_json: String) -> napi::Result<()> {
+        let file: SharedFile = serde_json::from_str(&file_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let mut orchestrator = self.orchestrator.lock().await;
+        orchestrator.memory.write_shared(&file.name, &file.content)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        orchestrator.state.add_shared_file(file).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn get_shared_tree(&self) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.get_shared_tree())
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn get_agent_memory_tree(&self, agent_id: String) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.get_agent_memory_tree(&agent_id))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn get_agent_context(&self, agent_id: String) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.get_agent_context(&agent_id))
             .map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 
     #[napi]
     pub async fn queue_message(&self, agent_id: String, message: String) -> napi::Result<()> {
-        let mut state = self.state.lock().await;
-        if let Some(agent) = state.agents.iter().find(|a| a.id == agent_id).cloned() {
-            let mut updated_agent = agent.clone();
-            let mut pending = updated_agent.pending_messages.unwrap_or_default();
-            pending.push(message);
-            updated_agent.pending_messages = Some(pending);
-            state.update_agent(&agent_id, updated_agent).await
-                .map_err(|e| napi::Error::from_reason(e))?;
-            Ok(())
-        } else {
-            Err(napi::Error::from_reason("Agent not found".to_string()))
-        }
+        self.orchestrator.lock().await.queue_message(&agent_id, message).await
+            .map_err(napi::Error::from_reason)
     }
 
     #[napi]
     pub async fn start(&self) -> napi::Result<()> {
-        let mem_mgr = MemoryManager::new(&self.state_dir)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-            
-        let state_guard = self.state.lock().await;
-        for agent in &state_guard.agents {
-            mem_mgr.setup_agent_dir(&agent.id)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        }
-
-        let mut cloned_state = CompanyState::init("memory").await
-            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        cloned_state.agents = state_guard.agents.clone();
-        cloned_state.projects = state_guard.projects.clone();
-        cloned_state.tools = state_guard.tools.clone();
-        cloned_state.shared_files = state_guard.shared_files.clone();
-        drop(state_guard);
-
-        let mut orch = Orchestrator::new(cloned_state, mem_mgr);
+        let mut orchestrator = self.orchestrator.lock().await;
         if let Some(ref executor) = self.tool_executor {
-            orch.set_tool_executor(executor.clone());
+            orchestrator.set_tool_executor(executor.clone());
         }
-        orch.run().await;
+        orchestrator.run().await;
         Ok(())
     }
 }

@@ -2,7 +2,9 @@ import { createEffect, createSignal, For, onCleanup, onSettled, Show } from 'sol
 import type { Component } from 'solid-js';
 import cytoscape from 'cytoscape';
 import type { Core, ElementDefinition } from 'cytoscape';
-import initWasm, { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
+import type { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
+import { RemoteOrchestrator } from './remote-orchestrator';
+import { createOrchestrator, foundCompany, inspectCompany } from './company-runtime';
 import './App.css';
 
 type ScheduledTask = { id: string; description: string; due_date: string; completed: boolean };
@@ -19,6 +21,7 @@ type MemoryNode =
   | { kind: 'folder'; name: string; children: MemoryNode[] }
   | { kind: 'file'; name: string; path: string; content: string };
 type ViewedFile = { path: string; content: string };
+type OrchestratorClient = OrchestratorWasm | RemoteOrchestrator;
 
 const INFERENCE_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', models: ['gemini-3.6-flash', 'gemini-3.6-pro'], disabled: false },
@@ -28,7 +31,8 @@ const INFERENCE_PROVIDERS = [
 const SERVICE_TIERS = ['default', 'flex', 'priority'];
 const SETTINGS_STORAGE_KEY = 'actualised.inference-settings';
 const RATE_LIMIT_STORAGE_KEY = 'actualised.rate-limits';
-const ORCHESTRATOR_STREAM_URL = import.meta.env.VITE_ORCHESTRATOR_STREAM_URL as string | undefined;
+const USE_REMOTE_ORCHESTRATOR = import.meta.env.VITE_ORCHESTRATOR_MODE === 'remote';
+const ORCHESTRATOR_STREAM_URL = USE_REMOTE_ORCHESTRATOR ? '/api/orchestrator/stream' : import.meta.env.VITE_ORCHESTRATOR_STREAM_URL as string | undefined;
 
 function loadStoredSettings(): InferenceSettings {
   const fallback: InferenceSettings = { provider: 'gemini', model: INFERENCE_PROVIDERS[0].models[0], serviceTier: 'default', apiKey: '' };
@@ -56,11 +60,13 @@ function loadStoredRateLimits(): RateLimitSettings {
 }
 
 function graphElements(agents: Agent[]): ElementDefinition[] {
-  const rootId = 'human-root';
+  const root = agents.find((agent) => !agent.parent_id);
   return [
-    { data: { id: rootId, label: 'You' }, classes: 'root' },
-    ...agents.map((agent) => ({ data: { id: agent.id, label: agent.name }, classes: agent.parent_id ? 'contributor' : 'lead' })),
-    ...agents.map((agent) => ({ data: { id: `${agent.parent_id ?? rootId}-${agent.id}`, source: agent.parent_id ?? rootId, target: agent.id } })),
+    ...agents.map((agent) => ({
+      data: { id: agent.id, label: agent.name.replaceAll(' ', '\n') },
+      classes: !agent.parent_id ? 'root' : agent.parent_id === root?.id ? 'lead' : 'contributor',
+    })),
+    ...agents.filter((agent) => agent.parent_id).map((agent) => ({ data: { id: `${agent.parent_id}-${agent.id}`, source: agent.parent_id!, target: agent.id } })),
   ];
 }
 
@@ -81,10 +87,10 @@ const MemoryTreeView: Component<{ nodes: MemoryNode[]; onOpenFile: (file: Viewed
   </ul>
 );
 
-const Dashboard: Component = () => {
+const Dashboard: Component<{ companyName: string; initialOrchestrator?: OrchestratorClient }> = (props) => {
   let cyContainer!: HTMLDivElement;
   let cy: Core | undefined;
-  let orchestrator: OrchestratorWasm | undefined;
+  let orchestrator: OrchestratorClient | undefined = props.initialOrchestrator;
   // Every call into `orchestrator` is funnelled through this chain so none ever overlap:
   // wasm-bindgen panics ("recursive use of an object") if a method is invoked while another
   // call on the same instance is still in flight (e.g. mid-await inside run_orchestrator()).
@@ -188,6 +194,20 @@ const Dashboard: Component = () => {
       const data = JSON.parse(event.data);
       if (data.type === 'chat_update' && data.agentId === selectedAgent()?.id) {
         void refreshAgentDetails(data.agentId);
+      } else if (data.type === 'state_changed' && orchestrator instanceof RemoteOrchestrator) {
+        void callOrchestrator(async (remote) => {
+          if (!(remote instanceof RemoteOrchestrator)) return;
+          await remote.refresh();
+          const companyAgents = remote.get_agents() as Agent[];
+          setAgents(companyAgents);
+          setProjects(remote.get_projects() as Project[]);
+          setTools(remote.get_tools() as Tool[]);
+          const selected = companyAgents.find((agent) => agent.id === selectedAgent()?.id);
+          if (selected) {
+            setSelectedAgent(selected);
+            return selected.id;
+          }
+        }).then((selectedId) => selectedId && refreshAgentDetails(selectedId));
       }
     };
     return () => sse.close();
@@ -353,8 +373,7 @@ const Dashboard: Component = () => {
   onSettled(() => {
     void (async () => {
       try {
-        await initWasm();
-        orchestrator = await OrchestratorWasm.init();
+        orchestrator = await createOrchestrator(orchestrator as OrchestratorWasm | undefined);
         await applyInferenceSettings(inferenceSettings());
         await applyRateLimits(rateLimitSettings());
         const companyAgents = orchestrator.get_agents() as Agent[];
@@ -372,14 +391,14 @@ const Dashboard: Component = () => {
           container: cyContainer,
           elements: graphElements(companyAgents),
           style: [
-            { selector: 'node', style: { label: 'data(label)', color: labelColor, 'font-size': 11, 'font-weight': 600, 'text-valign': 'bottom', 'text-margin-y': 9, 'background-color': '#9fc7c0', 'border-width': 2, 'border-color': '#547b75', width: 44, height: 44 } },
+            { selector: 'node', style: { label: 'data(label)', color: labelColor, 'font-size': 11, 'font-weight': 600, 'text-halign': 'center', 'text-valign': 'top', 'text-justification': 'center', 'text-wrap': 'wrap', 'text-margin-y': -10, 'background-color': '#9fc7c0', 'border-width': 2, 'border-color': '#547b75', width: 44, height: 44 } },
             { selector: 'node.root', style: { 'background-color': '#f4b8a8', 'border-color': '#a56354', width: 56, height: 56 } },
             { selector: 'node.lead', style: { 'background-color': '#d9c4e9', 'border-color': '#866b9c', width: 50, height: 50 } },
             { selector: 'node.contributor', style: { 'background-color': '#b9d8d1', 'border-color': '#568b80' } },
             { selector: 'node.selected', style: { 'border-width': 4, 'border-color': '#c25b3f', 'overlay-opacity': 0 } },
             { selector: 'edge', style: { width: 1.5, 'line-color': edgeColor, 'target-arrow-color': edgeColor, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
           ],
-          layout: { name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.25 },
+          layout: { name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.65 },
           wheelSensitivity: 0.18,
         });
 
@@ -407,7 +426,7 @@ const Dashboard: Component = () => {
     if (cy && currentAgents.length > 0) {
       cy.elements().remove();
       cy.add(graphElements(currentAgents));
-      cy.layout({ name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.25 }).run();
+      cy.layout({ name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.65 }).run();
       cy.$id(selectedAgent()?.id ?? '').addClass('selected');
     }
   });
@@ -416,7 +435,7 @@ const Dashboard: Component = () => {
 
   return <main class="canvas-page">
     <header class="canvas-header">
-      <div><p class="eyebrow">Actualised.ai / company canvas</p><h1>Company structure</h1></div>
+      <h1>{props.companyName}</h1>
       <div class="canvas-actions">
         <span>{agents().length} agents</span>
         <Show when={isOrchestratorRunning() || isContinuousLoop()}>
@@ -785,15 +804,76 @@ const Dashboard: Component = () => {
   </main>;
 };
 
-const SetupPage: Component<{ onComplete: () => void }> = (props) => <main class="setup-page">
-  <p class="eyebrow">Actualised.ai</p><h1>Build the company that builds the product.</h1>
-  <p>Start with the Engineering, Product, and Growth teams from the default company.</p>
-  <button class="primary-button" onClick={props.onComplete}>Initialise company</button>
-</main>;
+const SetupPage: Component<{ onComplete: (companyName: string, orchestrator?: OrchestratorClient) => void }> = (props) => {
+  let localOrchestrator: OrchestratorWasm | undefined;
+  const [companyName, setCompanyName] = createSignal<string | null>();
+  const [draftName, setDraftName] = createSignal('');
+  const [error, setError] = createSignal<string>();
+  const [isSubmitting, setIsSubmitting] = createSignal(false);
+
+  onSettled(() => {
+    void (async () => {
+      try {
+        if (USE_REMOTE_ORCHESTRATOR) {
+          const result = await inspectCompany();
+          setCompanyName(result.name);
+        } else {
+          const result = await inspectCompany();
+          localOrchestrator = result.orchestrator as OrchestratorWasm;
+          setCompanyName(result.name);
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Could not check company status');
+        setCompanyName(null);
+      }
+    })();
+  });
+
+  const foundVenture = async (event: SubmitEvent) => {
+    event.preventDefault();
+    const name = draftName().trim();
+    if (!name) return;
+    setIsSubmitting(true);
+    setError();
+    try {
+      const orchestrator = await foundCompany(name, localOrchestrator);
+      props.onComplete(name, orchestrator);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not found venture');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return <main class="setup-page">
+    <p class="eyebrow">Actualised.ai</p><h1>Build the company that builds the product.</h1>
+    <p>Start with a Project Manager coordinating the Engineering, Product, and Growth teams.</p>
+    <Show when={companyName() !== undefined} fallback={<p>Checking company status...</p>}>
+      <Show
+        when={companyName()}
+        fallback={<form class="setup-form" onSubmit={foundVenture}>
+          <label for="company-name">Company name</label>
+          <input id="company-name" required value={draftName()} onInput={(event) => setDraftName(event.currentTarget.value)} />
+          <button class="primary-button" type="submit" disabled={isSubmitting()}>{isSubmitting() ? 'Founding...' : 'Found Venture'}</button>
+        </form>}
+      >
+        {(name) => <button class="primary-button" onClick={() => props.onComplete(name(), localOrchestrator)}>Continue building {name()}</button>}
+      </Show>
+    </Show>
+    <Show when={error()}>{(message) => <p class="error-banner">{message()}</p>}</Show>
+  </main>;
+};
 
 const App: Component = () => {
-  const [isSetup, setIsSetup] = createSignal(false);
-  return <Show when={isSetup()} fallback={<SetupPage onComplete={() => setIsSetup(true)} />}><Dashboard /></Show>;
+  const [companyName, setCompanyName] = createSignal<string>();
+  const [initialOrchestrator, setInitialOrchestrator] = createSignal<OrchestratorClient>();
+  const completeSetup = (name: string, orchestrator?: OrchestratorClient) => {
+    setInitialOrchestrator(orchestrator);
+    setCompanyName(name);
+  };
+  return <Show when={companyName()} fallback={<SetupPage onComplete={completeSetup} />}>
+    {(name) => <Dashboard companyName={name()} initialOrchestrator={initialOrchestrator()} />}
+  </Show>;
 };
 
 export default App;

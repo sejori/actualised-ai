@@ -11,10 +11,12 @@ export class OrchestratorWasm {
     add_tool(tool_json: any): Promise<void>;
     configure_inference(config_json: any): void;
     configure_rate_limits(config_json: any): void;
+    found_company(name: string): Promise<void>;
     get_agent_context(agent_id: string): any;
     get_agent_memories(agent_id: string): any;
     get_agent_memory_tree(agent_id: string): any;
     get_agents(): any;
+    get_company_name(): string | undefined;
     get_projects(): any;
     get_shared_files(): any;
     get_shared_tree(): any;
@@ -40,10 +42,12 @@ export interface InitOutput {
     readonly orchestratorwasm_add_tool: (a: number, b: any) => any;
     readonly orchestratorwasm_configure_inference: (a: number, b: any) => [number, number];
     readonly orchestratorwasm_configure_rate_limits: (a: number, b: any) => [number, number];
+    readonly orchestratorwasm_found_company: (a: number, b: number, c: number) => any;
     readonly orchestratorwasm_get_agent_context: (a: number, b: number, c: number) => [number, number, number];
     readonly orchestratorwasm_get_agent_memories: (a: number, b: number, c: number) => [number, number, number];
     readonly orchestratorwasm_get_agent_memory_tree: (a: number, b: number, c: number) => [number, number, number];
     readonly orchestratorwasm_get_agents: (a: number) => [number, number, number];
+    readonly orchestratorwasm_get_company_name: (a: number) => [number, number];
     readonly orchestratorwasm_get_projects: (a: number) => [number, number, number];
     readonly orchestratorwasm_get_shared_files: (a: number) => [number, number, number];
     readonly orchestratorwasm_get_shared_tree: (a: number) => [number, number, number];

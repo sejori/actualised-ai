@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:cloud": "vite build --mode cloud",
+    "build:pages": "vite build --mode pages",
     "preview": "vite preview",
     "test:e2e": "playwright test"
   },
