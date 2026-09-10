@@ -88,3 +88,21 @@ jobs:
           TF_VAR_surrealdb_user: ${{ secrets.SURREALDB_USER }}
           TF_VAR_surrealdb_pass: ${{ secrets.SURREALDB_PASS }}
           TF_VAR_telegram_token: ${{ secrets.TELEGRAM_TOKEN }}
+
+      - name: Verify Cloud Run deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_url="$(gcloud run services describe actualised-orchestrator \
+            --project gen-lang-client-0676741409 \
+            --region europe-west2 \
+            --format='value(status.url)')"
+          health="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 "$service_url/health")"
+          test "$health" = '{"status":"ready"}'
+          script_path="$(curl --fail --silent --show-error "$service_url/" | sed -n 's/.*src="\([^"]*\.js\)".*/\1/p')"
+          test -n "$script_path"
+          content_type="$(curl --fail --silent --show-error --head "$service_url$script_path" | tr -d '\r' | awk -F': ' 'tolower($1) == "content-type" { print tolower($2) }')"
+          case "$content_type" in
+            application/javascript*|text/javascript*) ;;
+            *) echo "Unexpected script content type: $content_type"; exit 1 ;;
+          esac

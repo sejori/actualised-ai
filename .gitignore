@@ -19,6 +19,7 @@ actualised_state/
 # Environment Variables
 .env
 .env.local
+.env2.txt
 
 # OS Files
 .DS_Store

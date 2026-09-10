@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use serde_json::json;
+#[cfg(not(target_arch = "wasm32"))]
+use surrealdb_types::SurrealValue;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct Tool {
     pub name: String,
     pub description: String,

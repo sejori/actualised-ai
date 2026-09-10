@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::inference::Tool;
+#[cfg(not(target_arch = "wasm32"))]
+use surrealdb_types::{RecordId, SurrealValue};
 
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb::Surreal;
@@ -7,6 +9,25 @@ use surrealdb::Surreal;
 use surrealdb::engine::any::{connect, Any};
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb::opt::auth::Root;
+#[cfg(not(target_arch = "wasm32"))]
+use std::future::Future;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::{Duration, Instant};
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn with_database_timeout<T, E>(phase: &str, future: impl Future<Output = Result<T, E>>) -> Result<T, String>
+where
+    E: std::fmt::Display,
+{
+    eprintln!("Starting SurrealDB {phase}");
+    let started = Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(15), future)
+        .await
+        .map_err(|_| format!("SurrealDB {phase} timed out after 15 seconds"))?
+        .map_err(|error| format!("SurrealDB {phase} failed: {error}"));
+    eprintln!("Completed SurrealDB {phase} in {} ms", started.elapsed().as_millis());
+    result
+}
 
 #[cfg(not(target_arch = "wasm32"))]
 fn record_content<T: Serialize>(value: &T) -> Result<serde_json::Value, String> {
@@ -18,6 +39,7 @@ fn record_content<T: Serialize>(value: &T) -> Result<serde_json::Value, String> 
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct AgentTelemetry {
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
@@ -27,6 +49,7 @@ pub struct AgentTelemetry {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct ScheduledTask {
     pub id: String,
     pub description: String,
@@ -35,6 +58,7 @@ pub struct ScheduledTask {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct Agent {
     pub id: String,
     pub name: String,
@@ -48,6 +72,7 @@ pub struct Agent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct Project {
     pub id: String,
     pub title: String,
@@ -55,6 +80,7 @@ pub struct Project {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct SharedFile {
     pub id: String,
     pub name: String,
@@ -80,27 +106,40 @@ impl CompanyState {
         } else {
             format!("surrealkv://{}", db_path)
         };
-
-        let db = connect(&url).await.map_err(|e| e.to_string())?;
+        let db = with_database_timeout("connection", async { connect(&url).await }).await?;
 
         if let (Ok(user), Ok(pass)) = (std::env::var("SURREALDB_USER"), std::env::var("SURREALDB_PASS")) {
-            db.signin(Root {
-                username: &user,
-                password: &pass,
-            }).await.map_err(|e| e.to_string())?;
+            with_database_timeout("authentication", async {
+                db.signin(Root {
+                    username: user,
+                    password: pass,
+                }).await
+            }).await?;
         }
 
-        db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
+        with_database_timeout("namespace selection", async {
+            db.use_ns("actualised").use_db("core").await
+        }).await?;
 
-        let mut response = db.query(
-            "SELECT meta::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent;
-             SELECT meta::id(id) AS id, title, description FROM project;
-             SELECT name, description, parameters FROM tool;
-             SELECT meta::id(id) AS id, name, content FROM shared_file;
-             SELECT VALUE name FROM company LIMIT 1"
-        )
-            .await
-            .map_err(|e| e.to_string())?;
+        with_database_timeout("schema initialization", async {
+            db.query(
+                "DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;
+                 DEFINE TABLE IF NOT EXISTS project SCHEMALESS;
+                 DEFINE TABLE IF NOT EXISTS tool SCHEMALESS;
+                 DEFINE TABLE IF NOT EXISTS shared_file SCHEMALESS;
+                 DEFINE TABLE IF NOT EXISTS company SCHEMALESS;"
+            ).await?.check()
+        }).await?;
+
+        let mut response = with_database_timeout("state hydration", async {
+            db.query(
+                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent;
+                 SELECT record::id(id) AS id, title, description FROM project;
+                 SELECT name, description, parameters FROM tool;
+                 SELECT record::id(id) AS id, name, content FROM shared_file;
+                 SELECT VALUE name FROM company LIMIT 1"
+            ).await
+        }).await?;
         let agents = response.take::<Vec<Agent>>(0).map_err(|e| e.to_string())?;
         let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
         let tools = response.take::<Vec<Tool>>(2).map_err(|e| e.to_string())?;
@@ -132,7 +171,7 @@ impl CompanyState {
         #[cfg(not(target_arch = "wasm32"))]
         self.db
             .query("UPDATE company:main SET name = $name")
-            .bind(("name", &name))
+            .bind(("name", name.clone()))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
 
@@ -164,8 +203,8 @@ impl CompanyState {
         for ag in updates_needed {
             let content = record_content(&ag)?;
             let mut _res = self.db
-                .query("UPDATE type::thing('agent', $id) CONTENT $agent")
-                .bind(("id", &ag.id))
+                .query("UPDATE $record CONTENT $agent")
+                .bind(("record", RecordId::new("agent", ag.id.clone())))
                 .bind(("agent", content))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
@@ -204,8 +243,8 @@ impl CompanyState {
         for ag in updates_needed {
             let content = record_content(&ag)?;
             let mut _res = self.db
-                .query("UPDATE type::thing('agent', $id) CONTENT $agent")
-                .bind(("id", &ag.id))
+                .query("UPDATE $record CONTENT $agent")
+                .bind(("record", RecordId::new("agent", ag.id.clone())))
                 .bind(("agent", content))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
@@ -248,16 +287,16 @@ impl CompanyState {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut _res = self.db
-                .query("DELETE type::thing('agent', $id)")
-                .bind(("id", id))
+                .query("DELETE $record")
+                .bind(("record", RecordId::new("agent", id)))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
 
             for ag in updates_needed {
                 let content = record_content(&ag)?;
                 let mut _res = self.db
-                    .query("UPDATE type::thing('agent', $id) CONTENT $agent")
-                    .bind(("id", &ag.id))
+                    .query("UPDATE $record CONTENT $agent")
+                    .bind(("record", RecordId::new("agent", ag.id.clone())))
                     .bind(("agent", content))
                     .await.map_err(|e| e.to_string())?
                     .check().map_err(|e| e.to_string())?;
@@ -274,8 +313,8 @@ impl CompanyState {
         {
             let content = record_content(&project)?;
             let mut _res = self.db
-                .query("CREATE type::thing('project', $id) CONTENT $project")
-                .bind(("id", &project.id))
+                .query("CREATE $record CONTENT $project")
+                .bind(("record", RecordId::new("project", project.id.clone())))
                 .bind(("project", content))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
@@ -290,9 +329,9 @@ impl CompanyState {
     pub async fn add_tool(&mut self, tool: Tool) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         self.db
-            .query("UPDATE type::thing('tool', $id) CONTENT $tool")
-            .bind(("id", &tool.name))
-            .bind(("tool", &tool))
+            .query("UPDATE $record CONTENT $tool")
+            .bind(("record", RecordId::new("tool", tool.name.clone())))
+            .bind(("tool", tool.clone()))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
 
@@ -303,10 +342,10 @@ impl CompanyState {
     pub async fn update_tool(&mut self, name: &str, new_tool: Tool) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         self.db
-            .query("DELETE type::thing('tool', $old_id); UPDATE type::thing('tool', $id) CONTENT $tool")
-            .bind(("old_id", name))
-            .bind(("id", &new_tool.name))
-            .bind(("tool", &new_tool))
+            .query("DELETE $old_record; UPDATE $record CONTENT $tool")
+            .bind(("old_record", RecordId::new("tool", name)))
+            .bind(("record", RecordId::new("tool", new_tool.name.clone())))
+            .bind(("tool", new_tool.clone()))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
 
@@ -319,8 +358,8 @@ impl CompanyState {
     pub async fn remove_tool(&mut self, name: &str) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         self.db
-            .query("DELETE type::thing('tool', $id)")
-            .bind(("id", name))
+            .query("DELETE $record")
+            .bind(("record", RecordId::new("tool", name)))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
 
@@ -335,8 +374,8 @@ impl CompanyState {
         {
             let content = record_content(&file)?;
             self.db
-                .query("UPDATE type::thing('shared_file', $id) CONTENT $file")
-                .bind(("id", &file.id))
+                .query("UPDATE $record CONTENT $file")
+                .bind(("record", RecordId::new("shared_file", file.id.clone())))
                 .bind(("file", content))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
@@ -349,8 +388,8 @@ impl CompanyState {
     pub async fn remove_shared_file(&mut self, id: &str) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         self.db
-            .query("DELETE type::thing('shared_file', $id)")
-            .bind(("id", id))
+            .query("DELETE $record")
+            .bind(("record", RecordId::new("shared_file", id)))
             .await.map_err(|e| e.to_string())?
             .check().map_err(|e| e.to_string())?;
 
