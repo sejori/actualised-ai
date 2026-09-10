@@ -5,14 +5,7 @@ use actualised_core::{
 
 #[tokio::test]
 async fn default_company_has_the_expected_teams_and_projects() {
-    let database_dir = std::env::temp_dir().join(format!(
-        "actualised-core-default-company-{}",
-        std::process::id()
-    ));
-    let database_path = database_dir.join("actualised.db");
-    let _ = std::fs::remove_dir_all(&database_dir);
-
-    let mut state = CompanyState::init(database_path.to_string_lossy().as_ref())
+    let mut state = CompanyState::init("mem://")
         .await
         .expect("test database should initialize");
     seed_default_company(&mut state)
@@ -42,6 +35,4 @@ async fn default_company_has_the_expected_teams_and_projects() {
         .iter()
         .any(|project| project.id == "proj_root_1"));
 
-    drop(state);
-    let _ = std::fs::remove_dir_all(&database_dir);
 }
