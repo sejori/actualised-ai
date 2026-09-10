@@ -8,6 +8,9 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    concurrency:
+      group: "cloud-run-deploy"
+      cancel-in-progress: true
     permissions:
       contents: 'read'
       id-token: 'write'
