@@ -1,0 +1,9 @@
+.git
+.github
+node_modules
+target
+packages/web-ui/node_modules
+packages/sdk/node_modules
+tests
+playwright-report
+test-results

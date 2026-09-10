@@ -4,5 +4,12 @@
   "private": true,
   "workspaces": [
     "packages/*"
-  ]
+  ],
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "hono": "^4.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "@swc/core", "@napi-rs/cli"]
+  }
 }

@@ -36,12 +36,39 @@ jobs:
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install JS Dependencies
+        run: pnpm install
+
+      - name: Build Web UI
+        working-directory: packages/web-ui
+        run: pnpm run build
+
+      - name: Build SDK (N-API)
+        working-directory: packages/sdk
+        run: pnpm run build
+
       - name: Build and Push Docker Image
         run: |
-          gcloud builds submit \
-            --tag gcr.io/gen-lang-client-0676741409/actualised-orchestrator:${{ github.sha }} \
-            --project gen-lang-client-0676741409 \
-            .
+          gcloud auth configure-docker gcr.io --quiet
+          docker build -t gcr.io/gen-lang-client-0676741409/actualised-orchestrator:${{ github.sha }} .
+          docker push gcr.io/gen-lang-client-0676741409/actualised-orchestrator:${{ github.sha }}
 
       - name: Terraform Init
         working-directory: infra
