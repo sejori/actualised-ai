@@ -13,7 +13,7 @@ COPY packages/ packages/
 
 # Build napi addon
 WORKDIR /app/packages/sdk
-RUN npm install -g pnpm
+RUN npm install -g pnpm@8.12.0
 RUN pnpm install
 RUN pnpm run build
 
@@ -31,7 +31,7 @@ COPY --from=builder /app/packages/web-ui/dist /app/packages/web-ui/dist
 
 WORKDIR /app/packages/sdk
 
-RUN npm install -g pnpm
+RUN npm install -g pnpm@8.12.0
 RUN pnpm install
 
 ENV PORT=8080
