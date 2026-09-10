@@ -6,7 +6,7 @@ variable "project_id" {
 variable "region" {
   type        = string
   description = "The GCP region"
-  default     = "us-central1"
+  default     = "europe-west2"
 }
 
 variable "orchestrator_image" {
