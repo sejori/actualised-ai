@@ -79,6 +79,7 @@ jobs:
         run: terraform apply -auto-approve
         env:
           # Tell terraform to use the specific SHA image we just built
+          TF_VAR_project_id: "gen-lang-client-0676741409"
           TF_VAR_orchestrator_image: "gcr.io/gen-lang-client-0676741409/actualised-orchestrator:${{ github.sha }}"
           # Secrets pulled from GitHub Actions Secrets
           TF_VAR_surrealdb_url: ${{ secrets.SURREALDB_URL }}
