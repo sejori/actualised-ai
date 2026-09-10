@@ -10,6 +10,10 @@
     "hono": "^4.6.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "@swc/core", "@napi-rs/cli"]
+    "onlyBuiltDependencies": [
+      "@napi-rs/cli",
+      "@swc/core",
+      "esbuild"
+    ]
   }
 }
