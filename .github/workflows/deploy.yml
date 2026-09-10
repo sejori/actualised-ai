@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: "pages"
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-and-deploy:
@@ -46,9 +46,7 @@ jobs:
           wasm-pack build --target web --out-dir ../../packages/web-ui/src/wasm
 
       - name: Setup Web UI Dependencies
-        run: |
-          cd packages/web-ui
-          pnpm install
+        run: pnpm install
 
       - name: Build Web UI
         run: |
