@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency:
       group: "cloud-run-deploy"
-      cancel-in-progress: true
+      cancel-in-progress: false
     permissions:
       contents: 'read'
       id-token: 'write'
