@@ -12,9 +12,9 @@ type Tool = { name: string; description: string; parameters: any };
 type SharedFile = { id: string; name: string; content: string };
 type HoverPosition = { x: number; y: number };
 type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string };
-type RateLimitSettings = { maxConcurrentRequests: number; requestsPerSecond: number };
+type RateLimitSettings = { maxConcurrentRequests: number; requestsPerMinute: number };
 type ConversationTurn = { role: 'operator' | 'agent'; content: string };
-type AgentContext = { pending_messages: string[]; history: ConversationTurn[] };
+type AgentContext = { pending_messages?: string[]; history?: ConversationTurn[] };
 type MemoryNode =
   | { kind: 'folder'; name: string; children: MemoryNode[] }
   | { kind: 'file'; name: string; path: string; content: string };
@@ -28,6 +28,7 @@ const INFERENCE_PROVIDERS = [
 const SERVICE_TIERS = ['default', 'flex', 'priority'];
 const SETTINGS_STORAGE_KEY = 'actualised.inference-settings';
 const RATE_LIMIT_STORAGE_KEY = 'actualised.rate-limits';
+const ORCHESTRATOR_STREAM_URL = import.meta.env.VITE_ORCHESTRATOR_STREAM_URL as string | undefined;
 
 function loadStoredSettings(): InferenceSettings {
   const fallback: InferenceSettings = { provider: 'gemini', model: INFERENCE_PROVIDERS[0].models[0], serviceTier: 'default', apiKey: '' };
@@ -40,10 +41,15 @@ function loadStoredSettings(): InferenceSettings {
 }
 
 function loadStoredRateLimits(): RateLimitSettings {
-  const fallback: RateLimitSettings = { maxConcurrentRequests: 5, requestsPerSecond: 0 };
+  const fallback: RateLimitSettings = { maxConcurrentRequests: 5, requestsPerMinute: 0 };
   try {
     const raw = localStorage.getItem(RATE_LIMIT_STORAGE_KEY);
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+    if (!raw) return fallback;
+    const stored = JSON.parse(raw) as Partial<RateLimitSettings> & { requestsPerSecond?: number };
+    return {
+      maxConcurrentRequests: stored.maxConcurrentRequests ?? fallback.maxConcurrentRequests,
+      requestsPerMinute: stored.requestsPerMinute ?? (stored.requestsPerSecond ?? 0) * 60,
+    };
   } catch {
     return fallback;
   }
@@ -135,7 +141,11 @@ const Dashboard: Component = () => {
 
   const applyRateLimits = async (settings: RateLimitSettings) => {
     try {
-      await callOrchestrator((o) => o.configure_rate_limits({ max_concurrent_requests: settings.maxConcurrentRequests, requests_per_second: settings.requestsPerSecond }));
+      await callOrchestrator((o) => o.configure_rate_limits({
+        max_concurrent_requests: settings.maxConcurrentRequests,
+        requests_per_minute: settings.requestsPerMinute,
+        working_hours: null,
+      }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to apply rate limits');
     }
@@ -170,9 +180,10 @@ const Dashboard: Component = () => {
   };
 
   // SSE streaming connection to serve as the chat interface boundary to the orchestrator/SDKs
-  createEffect(() => undefined, () => {
+  createEffect(() => ORCHESTRATOR_STREAM_URL, (streamUrl) => {
+    if (!streamUrl) return;
     // In a deployed environment, this connects to the SDK/Orchestrator backend
-    const sse = new EventSource('/api/orchestrator/stream');
+    const sse = new EventSource(streamUrl);
     sse.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'chat_update' && data.agentId === selectedAgent()?.id) {
@@ -335,7 +346,7 @@ const Dashboard: Component = () => {
     }
   });
 
-  createEffect(() => agentContext()?.history.length, () => {
+  createEffect(() => agentContext()?.history?.length, () => {
     if (chatScrollRef) chatScrollRef.scrollTop = chatScrollRef.scrollHeight;
   });
 
@@ -595,16 +606,16 @@ const Dashboard: Component = () => {
 
             <div class="inspector-section">
               <h3>Inference context</h3>
-              <Show when={(agentContext()?.history.length ?? 0) > 0} fallback={<p class="empty-hint">No turns run yet.</p>}>
+              <Show when={(agentContext()?.history?.length ?? 0) > 0} fallback={<p class="empty-hint">No turns run yet.</p>}>
                 <div class="chat-scroll" ref={chatScrollRef}>
-                  <For each={agentContext()?.history}>
+                  <For each={agentContext()?.history ?? []}>
                     {(turn) => <div class={`chat-bubble chat-${turn.role}`}><span class="chat-role">{turn.role === 'operator' ? 'Operator' : agent().name}</span><p>{turn.content}</p></div>}
                   </For>
                 </div>
               </Show>
-              <Show when={(agentContext()?.pending_messages.length ?? 0) > 0}>
+              <Show when={(agentContext()?.pending_messages?.length ?? 0) > 0}>
                 <p class="context-label">Queued for next turn</p>
-                <ul class="pending-list"><For each={agentContext()?.pending_messages}>{(message) => <li>{message}</li>}</For></ul>
+                <ul class="pending-list"><For each={agentContext()?.pending_messages ?? []}>{(message) => <li>{message}</li>}</For></ul>
               </Show>
               <form
                 class="message-form"
@@ -730,13 +741,13 @@ const Dashboard: Component = () => {
                 onInput={(event) => setDraftRateLimit((prev) => ({ ...prev, maxConcurrentRequests: Number(event.currentTarget.value) || 1 }))}
               />
             </label>
-            <label>Requests per second (0 = unlimited)
+            <label>Requests per minute (0 = unlimited)
               <input
                 type="number"
                 min="0"
                 step="0.1"
-                value={draftRateLimit().requestsPerSecond}
-                onInput={(event) => setDraftRateLimit((prev) => ({ ...prev, requestsPerSecond: Number(event.currentTarget.value) || 0 }))}
+                value={draftRateLimit().requestsPerMinute}
+                onInput={(event) => setDraftRateLimit((prev) => ({ ...prev, requestsPerMinute: Number(event.currentTarget.value) || 0 }))}
               />
             </label>
           </fieldset>

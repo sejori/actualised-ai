@@ -27,6 +27,7 @@ pub struct ConversationTurn {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct AgentContext {
     pub history: Vec<ConversationTurn>,
+    pub pending_messages: Vec<String>,
 }
 
 impl AgentContext {
@@ -89,7 +90,12 @@ impl Orchestrator {
     }
 
     pub fn get_agent_context(&self, agent_id: &str) -> AgentContext {
-        self.agent_contexts.get(agent_id).cloned().unwrap_or_default()
+        let mut context = self.agent_contexts.get(agent_id).cloned().unwrap_or_default();
+        context.pending_messages = self.state.agents.iter()
+            .find(|agent| agent.id == agent_id)
+            .and_then(|agent| agent.pending_messages.clone())
+            .unwrap_or_default();
+        context
     }
 
     pub fn get_agent_memory_tree(&self, agent_id: &str) -> Vec<crate::memory::MemoryNode> {
