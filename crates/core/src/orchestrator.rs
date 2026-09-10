@@ -1,9 +1,17 @@
 use crate::state::{CompanyState, Project};
-use crate::inference::{InferenceEngine, MockInferenceEngine, InferenceResult};
+use crate::inference::{InferenceEngine, MockInferenceEngine, InferenceResult, ToolCall};
 use crate::memory::MemoryManager;
 use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
+use async_trait::async_trait;
 use petgraph::graph::DiGraph;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+pub trait ToolExecutor: Send + Sync {
+    async fn execute(&self, agent_id: &str, tool_call: &ToolCall) -> Result<String, String>;
+}
 
 const DEFAULT_USER_PROMPT: &str = "What actions will you take on your assigned tasks?";
 /// How many past turns to keep per agent so the context view doesn't grow unbounded.
@@ -38,6 +46,7 @@ pub struct Orchestrator {
     pub memory: MemoryManager,
     pub rate_limit: RateLimitConfig,
     pub agent_contexts: HashMap<String, AgentContext>,
+    pub tool_executor: Option<Arc<dyn ToolExecutor>>,
 }
 
 impl Orchestrator {
@@ -49,6 +58,7 @@ impl Orchestrator {
             memory,
             rate_limit: RateLimitConfig::default(),
             agent_contexts: HashMap::new(),
+            tool_executor: None,
         }
     }
 
@@ -58,6 +68,10 @@ impl Orchestrator {
 
     pub fn set_rate_limit(&mut self, rate_limit: RateLimitConfig) {
         self.rate_limit = rate_limit;
+    }
+
+    pub fn set_tool_executor(&mut self, executor: Arc<dyn ToolExecutor>) {
+        self.tool_executor = Some(executor);
     }
 
     /// Queues an operator message to be appended to an agent's prompt on its next turn.
@@ -221,6 +235,15 @@ impl Orchestrator {
                                         println!("Failed to write shared file: {}", e);
                                     } else {
                                         println!("Successfully wrote shared file: {}", path);
+                                    }
+                                } else {
+                                    if let Some(ref executor) = self.tool_executor {
+                                        match executor.execute(&agent_id, call).await {
+                                            Ok(res) => println!("Custom tool {} executed: {}", call.name, res),
+                                            Err(e) => println!("Custom tool {} failed: {}", call.name, e),
+                                        }
+                                    } else {
+                                        println!("Unknown tool: {}", call.name);
                                     }
                                 }
                             }

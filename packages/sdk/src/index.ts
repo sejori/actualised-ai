@@ -25,16 +25,19 @@ export interface Agent {
  * When in browser, it would hit the HTTPS API. On server, it invokes the node addon.
  */
 export class ActualisedClient {
-  private company: typeof Company;
+  private company: Company;
 
-  constructor(dbPath: string) {
-    // In a real implementation, detect if we are in browser or server.
-    // Server mode uses napi, Browser mode hits the server's API.
-    this.company = new Company();
+  private constructor(company: Company) {
+    this.company = company;
+  }
+
+  static async create(dbPath: string): Promise<ActualisedClient> {
+    const company = await Company.init('Test Co', 'Testing', 'state', dbPath);
+    return new ActualisedClient(company);
   }
 
   async setPacing(config: RateLimitConfig) {
-    await this.company.set_pacing(
+    await this.company.setPacing(
       config.requestsPerMinute,
       config.workingHours?.start,
       config.workingHours?.end
@@ -42,17 +45,23 @@ export class ActualisedClient {
   }
 
   async getAgents(): Promise<Agent[]> {
-    const agentsJson = await this.company.get_agents();
+    const agentsJson = await this.company.getAgents();
     return JSON.parse(agentsJson);
   }
 
   async addAgent(agent: Agent): Promise<void> {
-    await this.company.add_agent(JSON.stringify(agent));
+    await this.company.addAgent(JSON.stringify(agent));
   }
 
   async queueMessage(agentId: string, message: string): Promise<void> {
-    await this.company.queue_message(agentId, message);
+    await this.company.queueMessage(agentId, message);
   }
 
-  // Other methods ...
+  registerToolExecutor(executor: (agentId: string, toolName: string, argsJson: string) => Promise<string>): void {
+    this.company.registerToolExecutor(executor);
+  }
+
+  async start(): Promise<void> {
+    await this.company.start();
+  }
 }

@@ -300,62 +300,50 @@ const Dashboard: Component = () => {
   const trapSharedTab = (event: KeyboardEvent) => trapTabWithin(sharedRef)(event);
   const trapToolsTab = (event: KeyboardEvent) => trapTabWithin(toolsRef)(event);
 
-  createEffect(
-    () => isToolLibraryOpen(),
-    (open) => {
-      if (open) toolsRef?.querySelector<HTMLElement>('.close-button')?.focus();
-      else lastFocusedNodeButton?.focus();
+  createEffect(() => {
+    const open = isToolLibraryOpen();
+    if (open) toolsRef?.querySelector<HTMLElement>('.close-button')?.focus();
+    else lastFocusedNodeButton?.focus();
+  });
+
+  createEffect(() => {
+    const open = isInspectorOpen();
+    if (open) {
+      inspectorRef?.querySelector<HTMLElement>('.close-button')?.focus();
+    } else {
+      lastFocusedNodeButton?.focus();
     }
-  );
+  });
 
-  createEffect(
-    () => isInspectorOpen(),
-    (open) => {
-      if (open) {
-        inspectorRef?.querySelector<HTMLElement>('.close-button')?.focus();
-      } else {
-        lastFocusedNodeButton?.focus();
-      }
-    },
-  );
+  createEffect(() => {
+    const open = isSettingsOpen();
+    if (open) {
+      settingsRef?.querySelector<HTMLElement>('select, input')?.focus();
+    } else {
+      lastFocusedNodeButton?.focus();
+    }
+  });
 
-  createEffect(
-    () => isSettingsOpen(),
-    (open) => {
-      if (open) {
-        settingsRef?.querySelector<HTMLElement>('select, input')?.focus();
-      } else {
-        lastFocusedNodeButton?.focus();
-      }
-    },
-  );
+  createEffect(() => {
+    const open = isSharedOpen();
+    if (open) {
+      sharedRef?.querySelector<HTMLElement>('.memory-leaf, summary, .close-button')?.focus();
+    } else {
+      lastFocusedNodeButton?.focus();
+    }
+  });
 
-  createEffect(
-    () => isSharedOpen(),
-    (open) => {
-      if (open) {
-        sharedRef?.querySelector<HTMLElement>('.memory-leaf, summary, .close-button')?.focus();
-      } else {
-        lastFocusedNodeButton?.focus();
-      }
-    },
-  );
+  createEffect(() => {
+    const file = viewedMemory();
+    if (!file) {
+      inspectorRef?.querySelector<HTMLElement>('.memory-leaf, summary')?.focus();
+    }
+  });
 
-  createEffect(
-    () => viewedMemory(),
-    (file) => {
-      if (!file) {
-        inspectorRef?.querySelector<HTMLElement>('.memory-leaf, summary')?.focus();
-      }
-    },
-  );
-
-  createEffect(
-    () => agentContext()?.history.length,
-    () => {
-      if (chatScrollRef) chatScrollRef.scrollTop = chatScrollRef.scrollHeight;
-    },
-  );
+  createEffect(() => {
+    const len = agentContext()?.history.length;
+    if (chatScrollRef) chatScrollRef.scrollTop = chatScrollRef.scrollHeight;
+  });
 
   onSettled(() => {
     void (async () => {
@@ -371,16 +359,20 @@ const Dashboard: Component = () => {
         setSelectedAgent(companyAgents[0]);
         if (companyAgents[0]) await refreshAgentDetails(companyAgents[0].id);
 
+        const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const labelColor = isDark ? '#e8e6e3' : '#3c3830';
+        const edgeColor = isDark ? '#6b665b' : '#9d9789';
+
         cy = cytoscape({
           container: cyContainer,
           elements: graphElements(companyAgents),
           style: [
-            { selector: 'node', style: { label: 'data(label)', color: '#3c3830', 'font-size': 11, 'font-weight': 600, 'text-valign': 'bottom', 'text-margin-y': 9, 'background-color': '#9fc7c0', 'border-width': 2, 'border-color': '#547b75', width: 44, height: 44 } },
+            { selector: 'node', style: { label: 'data(label)', color: labelColor, 'font-size': 11, 'font-weight': 600, 'text-valign': 'bottom', 'text-margin-y': 9, 'background-color': '#9fc7c0', 'border-width': 2, 'border-color': '#547b75', width: 44, height: 44 } },
             { selector: 'node.root', style: { 'background-color': '#f4b8a8', 'border-color': '#a56354', width: 56, height: 56 } },
             { selector: 'node.lead', style: { 'background-color': '#d9c4e9', 'border-color': '#866b9c', width: 50, height: 50 } },
             { selector: 'node.contributor', style: { 'background-color': '#b9d8d1', 'border-color': '#568b80' } },
             { selector: 'node.selected', style: { 'border-width': 4, 'border-color': '#c25b3f', 'overlay-opacity': 0 } },
-            { selector: 'edge', style: { width: 1.5, 'line-color': '#9d9789', 'target-arrow-color': '#9d9789', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
+            { selector: 'edge', style: { width: 1.5, 'line-color': edgeColor, 'target-arrow-color': edgeColor, 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
           ],
           layout: { name: 'breadthfirst', directed: true, padding: 110, spacingFactor: 1.25 },
           wheelSensitivity: 0.18,

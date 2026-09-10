@@ -42,6 +42,7 @@ name = "actualised-sdk"
 version = "0.1.0"
 dependencies = [
  "actualised-core",
+ "async-trait",
  "napi",
  "napi-build",
  "napi-derive",

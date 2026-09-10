@@ -7,11 +7,31 @@ use actualised_core::memory::MemoryManager;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use async_trait::async_trait;
+
 #[napi]
 pub struct Company {
     state: Arc<Mutex<CompanyState>>,
     state_dir: String,
     rate_limit: Arc<Mutex<actualised_core::queue::RateLimitConfig>>,
+    tool_executor: Option<Arc<JsToolExecutor>>,
+}
+
+pub struct JsToolExecutor {
+    tsfn: napi::threadsafe_function::ThreadsafeFunction<(String, String, String), napi::threadsafe_function::ErrorStrategy::Fatal>,
+}
+
+#[async_trait]
+impl actualised_core::orchestrator::ToolExecutor for JsToolExecutor {
+    async fn execute(&self, agent_id: &str, tool_call: &actualised_core::inference::ToolCall) -> Result<String, String> {
+        let args_json = serde_json::to_string(&tool_call.args).unwrap_or_default();
+        
+        let res: Result<String, napi::Error> = self.tsfn.call_async((agent_id.to_string(), tool_call.name.clone(), args_json)).await;
+        match res {
+            Ok(js_str) => Ok(js_str),
+            Err(e) => Err(e.to_string()),
+        }
+    }
 }
 
 #[napi]
@@ -26,7 +46,24 @@ impl Company {
             state: Arc::new(Mutex::new(state)),
             state_dir: state_directory,
             rate_limit: Arc::new(Mutex::new(actualised_core::queue::RateLimitConfig::default())),
+            tool_executor: None,
         })
+    }
+
+    #[napi(ts_args_type = "executor: (agentId: string, toolName: string, argsJson: string) => Promise<string>")]
+    pub fn register_tool_executor(&mut self, executor: napi::JsFunction) -> napi::Result<()> {
+        use napi::threadsafe_function::{ThreadsafeFunction, ErrorStrategy};
+        let tsfn: ThreadsafeFunction<(String, String, String), ErrorStrategy::Fatal> = executor.create_threadsafe_function(0, |ctx| {
+            let (agent_id, tool_name, args_json): (String, String, String) = ctx.value;
+            let mut vec = Vec::new();
+            vec.push(ctx.env.create_string(&agent_id)?);
+            vec.push(ctx.env.create_string(&tool_name)?);
+            vec.push(ctx.env.create_string(&args_json)?);
+            Ok(vec)
+        })?;
+        
+        self.tool_executor = Some(Arc::new(JsToolExecutor { tsfn }));
+        Ok(())
     }
 
     #[napi]
@@ -124,6 +161,9 @@ impl Company {
         drop(state_guard);
 
         let mut orch = Orchestrator::new(cloned_state, mem_mgr);
+        if let Some(ref executor) = self.tool_executor {
+            orch.set_tool_executor(executor.clone());
+        }
         orch.run().await;
         Ok(())
     }

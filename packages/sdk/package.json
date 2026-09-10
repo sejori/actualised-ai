@@ -7,14 +7,16 @@
     "name": "actualised_sdk"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.0.0",
-    "typescript": "^5.0.0",
-    "hono": "^4.6.0",
     "@hono/node-server": "^1.13.0",
-    "tsx": "^4.19.0"
+    "@napi-rs/cli": "^3.0.0",
+    "hono": "^4.6.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.0.0",
+    "vitest": "^5.0.0"
   },
   "scripts": {
     "build": "napi build --platform --release",
-    "build:debug": "napi build --platform"
+    "build:debug": "napi build --platform",
+    "test": "vitest run"
   }
 }

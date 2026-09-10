@@ -6,7 +6,16 @@ import { ActualisedClient } from '../src/index';
 const app = new Hono();
 const port = Number(process.env.PORT) || 8080;
 
-const client = new ActualisedClient(process.env.SURREALDB_URL || 'surreal-cloud-url');
+let client: ActualisedClient;
+
+ActualisedClient.create(process.env.SURREALDB_URL || 'surreal-cloud-url')
+  .then(c => {
+    client = c;
+    console.log('Client initialized');
+  })
+  .catch(err => {
+    console.error('Failed to init client', err);
+  });
 
 app.get('/health', (c) => c.text('OK'));
 
