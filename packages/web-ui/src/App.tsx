@@ -170,7 +170,7 @@ const Dashboard: Component = () => {
   };
 
   // SSE streaming connection to serve as the chat interface boundary to the orchestrator/SDKs
-  createEffect(() => {
+  createEffect(() => undefined, () => {
     // In a deployed environment, this connects to the SDK/Orchestrator backend
     const sse = new EventSource('/api/orchestrator/stream');
     sse.onmessage = (event) => {
@@ -179,7 +179,7 @@ const Dashboard: Component = () => {
         void refreshAgentDetails(data.agentId);
       }
     };
-    onCleanup(() => sse.close());
+    return () => sse.close();
   });
 
   const sendAgentMessage = async (agentId: string) => {
@@ -300,14 +300,12 @@ const Dashboard: Component = () => {
   const trapSharedTab = (event: KeyboardEvent) => trapTabWithin(sharedRef)(event);
   const trapToolsTab = (event: KeyboardEvent) => trapTabWithin(toolsRef)(event);
 
-  createEffect(() => {
-    const open = isToolLibraryOpen();
+  createEffect(isToolLibraryOpen, (open) => {
     if (open) toolsRef?.querySelector<HTMLElement>('.close-button')?.focus();
     else lastFocusedNodeButton?.focus();
   });
 
-  createEffect(() => {
-    const open = isInspectorOpen();
+  createEffect(isInspectorOpen, (open) => {
     if (open) {
       inspectorRef?.querySelector<HTMLElement>('.close-button')?.focus();
     } else {
@@ -315,8 +313,7 @@ const Dashboard: Component = () => {
     }
   });
 
-  createEffect(() => {
-    const open = isSettingsOpen();
+  createEffect(isSettingsOpen, (open) => {
     if (open) {
       settingsRef?.querySelector<HTMLElement>('select, input')?.focus();
     } else {
@@ -324,8 +321,7 @@ const Dashboard: Component = () => {
     }
   });
 
-  createEffect(() => {
-    const open = isSharedOpen();
+  createEffect(isSharedOpen, (open) => {
     if (open) {
       sharedRef?.querySelector<HTMLElement>('.memory-leaf, summary, .close-button')?.focus();
     } else {
@@ -333,15 +329,13 @@ const Dashboard: Component = () => {
     }
   });
 
-  createEffect(() => {
-    const file = viewedMemory();
+  createEffect(viewedMemory, (file) => {
     if (!file) {
       inspectorRef?.querySelector<HTMLElement>('.memory-leaf, summary')?.focus();
     }
   });
 
-  createEffect(() => {
-    const len = agentContext()?.history.length;
+  createEffect(() => agentContext()?.history.length, () => {
     if (chatScrollRef) chatScrollRef.scrollTop = chatScrollRef.scrollHeight;
   });
 
@@ -398,8 +392,7 @@ const Dashboard: Component = () => {
     })();
   });
 
-  createEffect(() => {
-    const currentAgents = agents();
+  createEffect(agents, (currentAgents) => {
     if (cy && currentAgents.length > 0) {
       cy.elements().remove();
       cy.add(graphElements(currentAgents));
