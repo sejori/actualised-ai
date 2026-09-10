@@ -56,6 +56,14 @@ resource "google_cloud_run_v2_service" "orchestrator" {
   }
 }
 
+resource "google_cloud_run_v2_service_iam_member" "public_access" {
+  project  = google_cloud_run_v2_service.orchestrator.project
+  location = google_cloud_run_v2_service.orchestrator.location
+  name     = google_cloud_run_v2_service.orchestrator.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
 output "service_url" {
   value = google_cloud_run_v2_service.orchestrator.uri
 }
