@@ -4,7 +4,7 @@ import cytoscape from 'cytoscape';
 import type { Core, ElementDefinition } from 'cytoscape';
 import type { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
 import { RemoteOrchestrator } from './remote-orchestrator';
-import { createOrchestrator, foundCompany, inspectCompany } from './company-runtime';
+import { createOrchestrator, foundCompany, inspectCompany, signin, signup } from './company-runtime';
 import './App.css';
 
 type ScheduledTask = { id: string; description: string; due_date: string; completed: boolean };
@@ -833,6 +833,10 @@ const SetupPage: Component<{ onComplete: (companyName: string, orchestrator?: Or
     event.preventDefault();
     const name = draftName().trim();
     if (!name) return;
+    if (USE_REMOTE_ORCHESTRATOR) {
+      window.location.search = `?company=${encodeURIComponent(name)}`;
+      return;
+    }
     setIsSubmitting(true);
     setError();
     try {
@@ -855,6 +859,9 @@ const SetupPage: Component<{ onComplete: (companyName: string, orchestrator?: Or
           <label for="company-name">Company name</label>
           <input id="company-name" required value={draftName()} onInput={(event) => setDraftName(event.currentTarget.value)} />
           <button class="primary-button" type="submit" disabled={isSubmitting()}>{isSubmitting() ? 'Founding...' : 'Found Venture'}</button>
+          <div style="margin-top: 16px; text-align: center;">
+            <a href="?auth=login" style="color: var(--text-muted); font-size: 14px; text-decoration: underline;">Already have an account? Sign in</a>
+          </div>
         </form>}
       >
         {(name) => <button class="primary-button" onClick={() => props.onComplete(name(), localOrchestrator)}>Continue building {name()}</button>}
@@ -864,16 +871,96 @@ const SetupPage: Component<{ onComplete: (companyName: string, orchestrator?: Or
   </main>;
 };
 
+const AuthPage: Component<{ onComplete: () => void }> = (props) => {
+  const params = new URLSearchParams(window.location.search);
+  const companyName = params.get('company');
+  const isLoginMode = params.get('auth') === 'login';
+  
+  const [isLogin, setIsLogin] = createSignal(isLoginMode || !companyName);
+  const [email, setEmail] = createSignal('');
+  const [password, setPassword] = createSignal('');
+  const [error, setError] = createSignal<string>();
+  const [isSubmitting, setIsSubmitting] = createSignal(false);
+
+  const handleSubmit = async (e: SubmitEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setError();
+    try {
+      if (isLogin()) {
+        await signin(email(), password());
+      } else {
+        await signup(email(), password());
+      }
+      
+      // Auto-create company if we have it in URL
+      if (companyName && !isLogin()) {
+        await foundCompany(companyName);
+      }
+      
+      // Clear URL params and proceed
+      window.history.replaceState({}, '', window.location.pathname);
+      props.onComplete();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Authentication failed');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return <main class="setup-page">
+    <p class="eyebrow">Actualised.ai</p>
+    <h1>{isLogin() ? 'Sign back in' : (companyName ? `Create an account to found ${companyName}` : 'Create an account')}</h1>
+    <form class="setup-form" onSubmit={handleSubmit}>
+      <label for="email">Email</label>
+      <input id="email" type="email" required value={email()} onInput={(e) => setEmail(e.currentTarget.value)} />
+      
+      <label for="password">Password</label>
+      <input id="password" type="password" required value={password()} onInput={(e) => setPassword(e.currentTarget.value)} />
+      
+      <button class="primary-button" type="submit" disabled={isSubmitting()}>
+        {isSubmitting() ? 'Please wait...' : (isLogin() ? 'Sign In' : 'Sign Up')}
+      </button>
+      
+      <div style="margin-top: 16px; text-align: center;">
+        <button type="button" onClick={() => setIsLogin(!isLogin())} style="background: none; border: none; color: var(--text-muted); text-decoration: underline; cursor: pointer; font-size: 14px;">
+          {isLogin() ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
+        </button>
+      </div>
+    </form>
+    <Show when={error()}>{(message) => <p class="error-banner">{message()}</p>}</Show>
+  </main>;
+};
+
 const App: Component = () => {
   const [companyName, setCompanyName] = createSignal<string>();
   const [initialOrchestrator, setInitialOrchestrator] = createSignal<OrchestratorClient>();
+  
+  const params = new URLSearchParams(window.location.search);
+  const showAuth = params.has('company') || params.has('auth');
+  const [viewState, setViewState] = createSignal(showAuth ? 'auth' : 'setup');
+
   const completeSetup = (name: string, orchestrator?: OrchestratorClient) => {
     setInitialOrchestrator(orchestrator);
     setCompanyName(name);
+    setViewState('dashboard');
   };
-  return <Show when={companyName()} fallback={<SetupPage onComplete={completeSetup} />}>
-    {(name) => <Dashboard companyName={name()} initialOrchestrator={initialOrchestrator()} />}
-  </Show>;
+  
+  const completeAuth = () => {
+    setViewState('setup');
+    // Forcing a full reload so the app rehydrates state from the server properly with new cookies
+    window.location.reload();
+  };
+
+  return (
+    <Show when={viewState() === 'dashboard'} fallback={
+      <Show when={viewState() === 'auth'} fallback={<SetupPage onComplete={completeSetup} />}>
+        <AuthPage onComplete={completeAuth} />
+      </Show>
+    }>
+      <Dashboard companyName={companyName()!} initialOrchestrator={initialOrchestrator()} />
+    </Show>
+  );
 };
 
 export default App;

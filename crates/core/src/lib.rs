@@ -1,4 +1,5 @@
 pub mod default_company;
+pub mod auth;
 pub mod inference;
 pub mod memory;
 pub mod orchestrator;

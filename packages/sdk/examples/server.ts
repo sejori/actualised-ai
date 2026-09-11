@@ -1,40 +1,34 @@
 import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { setCookie, getCookie } from 'hono/cookie';
 import { ActualisedClient } from '../src/index';
 
 const app = new Hono();
 const port = Number(process.env.PORT) || 8080;
 
-let client: ActualisedClient;
-let initializationError: Error | undefined;
 const streamClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const encoder = new TextEncoder();
 
-const clientReady = ActualisedClient.create(process.env.SURREALDB_URL || 'mem://')
-  .then(c => {
-    client = c;
-    console.log('Client initialized');
-    return c;
-  })
-  .catch(err => {
-    initializationError = err instanceof Error ? err : new Error(String(err));
-    console.error('Failed to init client', initializationError.message);
-    throw initializationError;
-  });
+const clientMap = new Map<string, ActualisedClient>();
 
-const requireClient = async () => {
-  if (client) return client;
-  return clientReady;
+const requireClient = async (c: any) => {
+  const token = getCookie(c, 'session_token');
+  if (!token) throw new Error('Unauthorized');
+  
+  if (clientMap.has(token)) return clientMap.get(token)!;
+  
+  const client = await ActualisedClient.createWithToken(process.env.SURREALDB_URL || 'mem://', token);
+  clientMap.set(token, client);
+  return client;
 };
 
-const snapshot = async () => {
-  const readyClient = await requireClient();
+const snapshot = async (client: ActualisedClient) => {
   const [companyName, agents, projects, tools] = await Promise.all([
-    readyClient.getCompanyName(),
-    readyClient.getAgents(),
-    readyClient.getProjects(),
-    readyClient.getTools(),
+    client.getCompanyName(),
+    client.getAgents(),
+    client.getProjects(),
+    client.getTools(),
   ]);
   return { company_name: companyName, agents, projects, tools };
 };
@@ -56,69 +50,87 @@ app.onError((error, c) => {
 });
 
 app.get('/health', (c) => {
-  if (client) return c.json({ status: 'ready' });
-  return c.json({ status: 'not_ready' }, 503);
+  return c.json({ status: 'ready' });
 });
 
-app.get('/api/bootstrap', async (c) => c.json(await snapshot()));
-app.get('/api/company', async (c) => c.json({ name: await (await requireClient()).getCompanyName() }));
+app.post('/api/auth/signup', async (c) => {
+  const { email, password } = await c.req.json();
+  const token = await ActualisedClient.signup(process.env.SURREALDB_URL || 'mem://', email, password);
+  setCookie(c, 'session_token', token, { path: '/' });
+  return c.json({ success: true, token });
+});
+
+app.post('/api/auth/signin', async (c) => {
+  const { email, password } = await c.req.json();
+  const token = await ActualisedClient.signin(process.env.SURREALDB_URL || 'mem://', email, password);
+  setCookie(c, 'session_token', token, { path: '/' });
+  return c.json({ success: true, token });
+});
+
+app.post('/api/auth/logout', async (c) => {
+  setCookie(c, 'session_token', '', { path: '/', maxAge: 0 });
+  return c.json({ success: true });
+});
+
+app.get('/api/bootstrap', async (c) => c.json(await snapshot(await requireClient(c))));
+app.get('/api/company', async (c) => c.json({ name: await (await requireClient(c)).getCompanyName() }));
 app.post('/api/company', async (c) => {
   const body = await c.req.json<{ name: string }>();
-  await (await requireClient()).foundCompany(body.name);
+  await (await requireClient(c)).foundCompany(body.name);
   publishStateChanged();
-  return c.json(await snapshot(), 201);
+  return c.json(await snapshot(await requireClient(c)), 201);
 });
-app.get('/api/agents/:id/context', async (c) => c.json(await (await requireClient()).getAgentContext(c.req.param('id'))));
-app.get('/api/agents/:id/memory-tree', async (c) => c.json(await (await requireClient()).getAgentMemoryTree(c.req.param('id'))));
-app.get('/api/shared-tree', async (c) => c.json(await (await requireClient()).getSharedTree()));
+app.get('/api/agents/:id/context', async (c) => c.json(await (await requireClient(c)).getAgentContext(c.req.param('id'))));
+app.get('/api/agents/:id/memory-tree', async (c) => c.json(await (await requireClient(c)).getAgentMemoryTree(c.req.param('id'))));
+app.get('/api/shared-tree', async (c) => c.json(await (await requireClient(c)).getSharedTree()));
 
 app.post('/api/agents', async (c) => {
-  await (await requireClient()).addAgent(await c.req.json());
+  await (await requireClient(c)).addAgent(await c.req.json());
   publishStateChanged();
-  return c.json(await snapshot());
+  return c.json(await snapshot(await requireClient(c)));
 });
 app.put('/api/agents/:id', async (c) => {
-  await (await requireClient()).updateAgent(c.req.param('id'), await c.req.json());
+  await (await requireClient(c)).updateAgent(c.req.param('id'), await c.req.json());
   publishStateChanged();
-  return c.json(await snapshot());
+  return c.json(await snapshot(await requireClient(c)));
 });
 app.delete('/api/agents/:id', async (c) => {
-  await (await requireClient()).removeAgent(c.req.param('id'));
+  await (await requireClient(c)).removeAgent(c.req.param('id'));
   publishStateChanged();
-  return c.json(await snapshot());
+  return c.json(await snapshot(await requireClient(c)));
 });
 app.post('/api/agents/:id/messages', async (c) => {
   const body = await c.req.json<{ message: string }>();
-  await (await requireClient()).queueMessage(c.req.param('id'), body.message);
+  await (await requireClient(c)).queueMessage(c.req.param('id'), body.message);
   publishStateChanged();
   return c.json({ accepted: true });
 });
 app.post('/api/config/inference', async (c) => {
-  await (await requireClient()).configureInference(await c.req.json());
+  await (await requireClient(c)).configureInference(await c.req.json());
   return c.json({ configured: true });
 });
 app.post('/api/config/rate-limits', async (c) => {
   const body = await c.req.json<{ requests_per_minute: number; working_hours?: [string, string] | null }>();
-  await (await requireClient()).setPacing({
+  await (await requireClient(c)).setPacing({
     requestsPerMinute: body.requests_per_minute,
     workingHours: body.working_hours ? { start: body.working_hours[0], end: body.working_hours[1] } : undefined,
   });
   return c.json({ configured: true });
 });
 app.post('/api/orchestrator/run', async (c) => {
-  await (await requireClient()).start();
+  await (await requireClient(c)).start();
   publishStateChanged();
-  return c.json(await snapshot());
+  return c.json(await snapshot(await requireClient(c)));
 });
 app.post('/api/shared-files', async (c) => {
-  await (await requireClient()).addSharedFile(await c.req.json());
+  await (await requireClient(c)).addSharedFile(await c.req.json());
   publishStateChanged();
   return c.json({ created: true });
 });
 app.delete('/api/tools/:name', async (c) => {
-  await (await requireClient()).removeTool(c.req.param('name'));
+  await (await requireClient(c)).removeTool(c.req.param('name'));
   publishStateChanged();
-  return c.json(await snapshot());
+  return c.json(await snapshot(await requireClient(c)));
 });
 
 app.get('/api/orchestrator/stream', async (c) => {
@@ -143,47 +155,6 @@ app.get('/api/orchestrator/stream', async (c) => {
     }
   });
 });
-
-const telegramToken = process.env.TELEGRAM_TOKEN;
-if (telegramToken) {
-  clientReady.then(async (readyClient) => {
-    console.log('Starting Telegram bot polling...');
-    let lastUpdateId = 0;
-    while (true) {
-      try {
-        const res = await fetch(`https://api.telegram.org/bot${telegramToken}/getUpdates?offset=${lastUpdateId + 1}&timeout=30`);
-        if (!res.ok) {
-          console.error(`Telegram polling returned HTTP ${res.status}`);
-          await new Promise(r => setTimeout(r, 5000));
-          continue;
-        }
-        const data = await res.json();
-        if (data.ok && data.result.length > 0) {
-            for (const update of data.result) {
-              lastUpdateId = update.update_id;
-              if (update.message && update.message.text) {
-                console.log(`Received Telegram message from chat ${update.message.chat.id}`);
-                
-                const agents = await readyClient.getAgents();
-                const topAgent = agents.find(a => !a.parent_id);
-                if (topAgent) {
-                  const msg = `Message from User: ${update.message.text}`;
-                  await readyClient.queueMessage(topAgent.id, msg);
-                  publishStateChanged();
-                  console.log(`Queued message to top-level agent: ${topAgent.name}`);
-                } else {
-                  console.log('No top-level agent found to route message to.');
-                }
-              }
-            }
-        }
-      } catch (err) {
-        console.error('Telegram polling error:', err);
-        await new Promise(r => setTimeout(r, 5000));
-      }
-    }
-  }).catch((error) => console.error('Telegram polling unavailable:', error.message));
-}
 
 // Serve the Web UI built files
 app.use('/*', serveStatic({ root: '../web-ui/dist' }));

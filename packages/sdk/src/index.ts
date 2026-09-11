@@ -40,9 +40,22 @@ export class ActualisedClient {
     this.company = company;
   }
 
-  static async create(dbPath: string): Promise<ActualisedClient> {
+static async create(dbPath: string): Promise<ActualisedClient> {
     const company = await Company.init('Test Co', 'Testing', 'state', dbPath);
     return new ActualisedClient(company);
+  }
+
+  static async createWithToken(dbPath: string, token: string): Promise<ActualisedClient> {
+    const company = await Company.initWithToken('Test Co', 'Testing', 'state', dbPath, token);
+    return new ActualisedClient(company);
+  }
+
+  static async signup(dbPath: string, email: string, pass: string): Promise<string> {
+    return Company.signup(dbPath, email, pass);
+  }
+
+  static async signin(dbPath: string, email: string, pass: string): Promise<string> {
+    return Company.signin(dbPath, email, pass);
   }
 
   getCompanyName(): Promise<string | null> {

@@ -9,6 +9,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
     let tools = [
         Tool {
             name: "create_sub_project".to_string(),
+            company_id: None,
             description: "Create a sub project/epic".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -21,6 +22,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
         },
         Tool {
             name: "write_memory".to_string(),
+            company_id: None,
             description: "Write content to your own memory footprint. Use '/' in file_name to organise files into folders (e.g. 'research/competitors.md').".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -33,6 +35,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
         },
         Tool {
             name: "write_shared_file".to_string(),
+            company_id: None,
             description: "Write a file into the shared team directory, visible to every agent in the company. Use '/' in path to organise into folders (e.g. 'engineering/api-spec.md').".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -59,7 +62,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_eng_lead".to_string(),
@@ -70,7 +73,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_eng_frontend".to_string(),
@@ -81,7 +84,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["write_memory".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_eng_backend".to_string(),
@@ -92,7 +95,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["write_memory".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_product_lead".to_string(),
@@ -103,7 +106,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_product_designer".to_string(),
@@ -114,7 +117,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["write_memory".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_growth_lead".to_string(),
@@ -125,7 +128,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
         Agent {
             id: "node_growth_exec".to_string(),
@@ -136,7 +139,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             tools: vec!["write_memory".to_string(), "write_shared_file".to_string()],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         },
     ];
 
@@ -149,11 +152,13 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             id: "proj_root_1".to_string(),
             title: "Pawsome MVP: Storefront & Checkout".to_string(),
             description: "Assigned to Eng Lead: build the product catalog, cart, and checkout for the online pet store.".to_string(),
+            company_id: None,
         },
         Project {
             id: "proj_root_2".to_string(),
             title: "Pawsome MVP: Adoption Flow".to_string(),
             description: "Assigned to Product Lead: define the pet adoption application journey, from listing to approval.".to_string(),
+            company_id: None,
         },
     ] {
         state.add_project(project).await?;

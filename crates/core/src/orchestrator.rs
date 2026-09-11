@@ -219,7 +219,7 @@ impl Orchestrator {
                                     let project = Project {
                                         id: format!("proj_{}", uuid::Uuid::new_v4().simple()),
                                         title: title.clone(),
-                                        description,
+                                        description, company_id: None,
                                     };
                                     if let Err(e) = self.state.add_project(project).await {
                                         println!("Failed to create project: {}", e);

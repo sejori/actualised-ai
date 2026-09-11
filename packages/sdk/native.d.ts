@@ -1,5 +1,8 @@
 export class Company {
   static init(name: string, mission: string, stateDirectory: string, dbPath: string): Promise<Company>;
+  static initWithToken(name: string, mission: string, stateDirectory: string, dbPath: string, token: string): Promise<Company>;
+  static signup(dbPath: string, email: string, pass: string): Promise<string>;
+  static signin(dbPath: string, email: string, pass: string): Promise<string>;
   setPacing(requestsPerMinute: number, workingHoursStart?: string, workingHoursEnd?: string): Promise<void>;
   configureInference(configJson: string): Promise<void>;
   getCompanyName(): Promise<string | null>;

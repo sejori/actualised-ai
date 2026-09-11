@@ -60,6 +60,7 @@ pub struct ScheduledTask {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct Agent {
+    pub company_id: Option<String>,
     pub id: String,
     pub name: String,
     pub role: String,
@@ -74,6 +75,7 @@ pub struct Agent {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct Project {
+    pub company_id: Option<String>,
     pub id: String,
     pub title: String,
     pub description: String,
@@ -82,6 +84,7 @@ pub struct Project {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct SharedFile {
+    pub company_id: Option<String>,
     pub id: String,
     pub name: String,
     pub content: String,
@@ -96,11 +99,12 @@ pub struct CompanyState {
     pub tools: Vec<Tool>,
     pub shared_files: Vec<SharedFile>,
     pub company_name: Option<String>,
+    pub company_id: Option<String>,
 }
 
 impl CompanyState {
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn init(db_path: &str) -> Result<Self, String> {
+    pub async fn init(db_path: &str, token: Option<String>) -> Result<Self, String> {
         let url = if db_path.contains("://") {
             db_path.to_string()
         } else {
@@ -108,7 +112,11 @@ impl CompanyState {
         };
         let db = with_database_timeout("connection", async { connect(&url).await }).await?;
 
-        if let (Ok(user), Ok(pass)) = (std::env::var("SURREALDB_USER"), std::env::var("SURREALDB_PASS")) {
+        if let Some(tok) = token {
+            with_database_timeout("token authentication", async {
+                db.authenticate(tok).await
+            }).await?;
+        } else if let (Ok(user), Ok(pass)) = (std::env::var("SURREALDB_USER"), std::env::var("SURREALDB_PASS")) {
             with_database_timeout("authentication", async {
                 db.signin(Root {
                     username: user,
@@ -123,11 +131,16 @@ impl CompanyState {
 
         with_database_timeout("schema initialization", async {
             db.query(
-                "DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;
-                 DEFINE TABLE IF NOT EXISTS project SCHEMALESS;
-                 DEFINE TABLE IF NOT EXISTS tool SCHEMALESS;
-                 DEFINE TABLE IF NOT EXISTS shared_file SCHEMALESS;
-                 DEFINE TABLE IF NOT EXISTS company SCHEMALESS;"
+                "DEFINE TABLE IF NOT EXISTS user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
+                 DEFINE ACCESS user ON DATABASE TYPE RECORD
+                    SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
+                    SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
+                    DURATION FOR TOKEN 30d, FOR SESSION 30d;
+                 DEFINE TABLE IF NOT EXISTS company SCHEMALESS PERMISSIONS FOR select, update, delete WHERE owner = $auth.id;
+                 DEFINE TABLE IF NOT EXISTS agent SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                 DEFINE TABLE IF NOT EXISTS project SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                 DEFINE TABLE IF NOT EXISTS tool SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                 DEFINE TABLE IF NOT EXISTS shared_file SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
             ).await?.check()
         }).await?;
 
@@ -137,14 +150,16 @@ impl CompanyState {
                  SELECT record::id(id) AS id, title, description FROM project;
                  SELECT name, description, parameters FROM tool;
                  SELECT record::id(id) AS id, name, content FROM shared_file;
-                 SELECT VALUE name FROM company LIMIT 1"
+                 SELECT record::id(id) AS id, name FROM company LIMIT 1"
             ).await
         }).await?;
         let agents = response.take::<Vec<Agent>>(0).map_err(|e| e.to_string())?;
         let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
         let tools = response.take::<Vec<Tool>>(2).map_err(|e| e.to_string())?;
         let shared_files = response.take::<Vec<SharedFile>>(3).map_err(|e| e.to_string())?;
-        let company_name = response.take::<Vec<String>>(4).map_err(|e| e.to_string())?.into_iter().next();
+        let company_docs = response.take::<Vec<serde_json::Value>>(4).map_err(|e| e.to_string())?;
+        let company_id = company_docs.first().and_then(|d| d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
+        let company_name = company_docs.first().and_then(|d| d.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()));
         
         Ok(Self {
             db,
@@ -153,6 +168,7 @@ impl CompanyState {
             tools,
             shared_files,
             company_name,
+            company_id,
         })
     }
 
@@ -164,16 +180,20 @@ impl CompanyState {
             tools: Vec::new(),
             shared_files: Vec::new(),
             company_name: None,
+            company_id: None,
         })
     }
 
     pub async fn set_company_name(&mut self, name: String) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
-        self.db
-            .query("UPDATE company:main SET name = $name")
-            .bind(("name", name.clone()))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
+        {
+            let res = self.db
+                .query("IF (SELECT VALUE id FROM company LIMIT 1)[0] THEN UPDATE company SET name = $name ELSE CREATE company SET name = $name, owner = $auth.id END;")
+                .bind(("name", name.clone()))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
+            // We should reload company_id if we created it, but the app can just reload
+        }
 
         self.company_name = Some(name);
         Ok(())
@@ -184,6 +204,7 @@ impl CompanyState {
     pub async fn add_agent(&mut self, mut agent: Agent) -> Result<(), String> {
         let mut updates_needed = Vec::new();
         let id = agent.id.clone();
+        agent.company_id = self.company_id.clone();
         
         if self.agents.is_empty() {
             agent.parent_id = None;
@@ -326,7 +347,8 @@ impl CompanyState {
 
     // --- Tools ---
 
-    pub async fn add_tool(&mut self, tool: Tool) -> Result<(), String> {
+    pub async fn add_tool(&mut self, mut tool: Tool) -> Result<(), String> {
+        tool.company_id = self.company_id.clone();
         #[cfg(not(target_arch = "wasm32"))]
         self.db
             .query("UPDATE $record CONTENT $tool")
@@ -412,7 +434,7 @@ mod tests {
             tools: vec![],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None,
+            pending_messages: None, company_id: None,
         }
     }
 

@@ -19,6 +19,14 @@ export class RemoteOrchestrator {
     return new RemoteOrchestrator(await request<Bootstrap>('/api/bootstrap'));
   }
 
+  static async signup(email: string, pass: string) {
+    return request<{ success: boolean }>('/api/auth/signup', { method: 'POST', body: JSON.stringify({ email, pass }) });
+  }
+
+  static async signin(email: string, pass: string) {
+    return request<{ success: boolean }>('/api/auth/signin', { method: 'POST', body: JSON.stringify({ email, pass }) });
+  }
+
   static async getCompanyName() {
     return (await request<{ name: string | null }>('/api/company')).name;
   }

@@ -38,7 +38,7 @@ impl Company {
     #[napi]
     pub async fn init(name: String, mission: String, state_directory: String, db_path: String) -> napi::Result<Self> {
         println!("Initializing Company: {} - Mission: {}", name, mission);
-        let mut state = CompanyState::init(&db_path).await
+        let mut state = CompanyState::init(&db_path, None).await
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         if !state.agents.is_empty() && state.company_name.is_none() {
             state.set_company_name("Pawsome".to_string()).await
@@ -56,6 +56,41 @@ impl Company {
             tool_executor: None,
         })
     }
+
+    #[napi]
+    pub async fn init_with_token(name: String, mission: String, state_directory: String, db_path: String, token: String) -> napi::Result<Self> {
+        println!("Initializing Authenticated Company: {} - Mission: {}", name, mission);
+        let mut state = CompanyState::init(&db_path, Some(token)).await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        if !state.agents.is_empty() && state.company_name.is_none() {
+            state.set_company_name("Pawsome".to_string()).await
+                .map_err(napi::Error::from_reason)?;
+        }
+        let memory = MemoryManager::new(&state_directory)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        for agent in &state.agents {
+            memory.setup_agent_dir(&agent.id)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        }
+
+        Ok(Self {
+            orchestrator: Arc::new(Mutex::new(Orchestrator::new(state, memory))),
+            tool_executor: None,
+        })
+    }
+
+    #[napi]
+    pub async fn signup(db_path: String, email: String, pass: String) -> napi::Result<String> {
+        actualised_core::auth::signup(&db_path, &email, &pass).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn signin(db_path: String, email: String, pass: String) -> napi::Result<String> {
+        actualised_core::auth::signin(&db_path, &email, &pass).await
+            .map_err(napi::Error::from_reason)
+    }
+
 
     #[napi]
     pub async fn get_company_name(&self) -> Option<String> {
