@@ -201,6 +201,7 @@ mod tests {
             name: "test_tool".to_string(),
             description: "A test tool".to_string(),
             parameters: json!({ "type": "object" }),
+            company_id: None,
         };
         let serialized = serde_json::to_string(&tool).unwrap();
         assert!(serialized.contains("test_tool"));
@@ -235,6 +236,7 @@ mod tests {
             name: "mock_tool".to_string(),
             description: "mock desc".to_string(),
             parameters: json!({}),
+            company_id: None,
         };
         let res = engine.generate_response("sys", "user", vec![tool]).await.unwrap();
         if let InferenceResult::ToolCalls(calls) = res.result {

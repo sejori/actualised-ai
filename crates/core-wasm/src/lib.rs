@@ -24,7 +24,7 @@ impl OrchestratorWasm {
         console_error_panic_hook::set_once();
         
         // Initialize state using IndxDb
-        let state = CompanyState::init("indxdb://actualised_core").await
+        let state = CompanyState::init("indxdb://actualised_core", None, None).await
             .map_err(|e| JsValue::from_str(&format!("State Init Error: {}", e)))?;
         let mut state = state;
         seed_default_company(&mut state).await

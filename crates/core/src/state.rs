@@ -150,14 +150,14 @@ impl CompanyState {
 
         let mut response = with_database_timeout("state hydration", async {
             let mut q = db.query(
-                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent WHERE company_id =  OR company_id = null;
-                 SELECT record::id(id) AS id, title, description FROM project WHERE company_id =  OR company_id = null;
-                 SELECT name, description, parameters FROM tool WHERE company_id =  OR company_id = null;
-                 SELECT record::id(id) AS id, name, content FROM shared_file WHERE company_id =  OR company_id = null;
+                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent WHERE company_id = $target OR company_id = null;
+                 SELECT record::id(id) AS id, title, description FROM project WHERE company_id = $target OR company_id = null;
+                 SELECT name, description, parameters FROM tool WHERE company_id = $target OR company_id = null;
+                 SELECT record::id(id) AS id, name, content FROM shared_file WHERE company_id = $target OR company_id = null;
                  "
             );
             if target_company.is_some() {
-                q = q.query("SELECT record::id(id) AS id, name FROM company WHERE id =  LIMIT 1");
+                q = q.query("SELECT record::id(id) AS id, name FROM company WHERE id = $target LIMIT 1");
             } else {
                 q = q.query("SELECT record::id(id) AS id, name FROM company LIMIT 1");
             }
@@ -460,7 +460,7 @@ mod tests {
     }
 
     async fn create_state() -> CompanyState {
-        CompanyState::init("mem://").await.unwrap()
+        CompanyState::init("mem://", None, None).await.unwrap()
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ use actualised_core::{
 
 #[tokio::test]
 async fn default_company_has_the_expected_teams_and_projects() {
-    let mut state = CompanyState::init("mem://")
+    let mut state = CompanyState::init("mem://", None, None)
         .await
         .expect("test database should initialize");
     seed_default_company(&mut state)
