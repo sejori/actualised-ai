@@ -438,9 +438,11 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
     <Show when={isSidebarOpen()}>
       <div class="sidebar-overlay" style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:90;" onClick={() => setIsSidebarOpen(false)}></div>
       <aside class="left-sidebar" style="position:fixed; top:0; left:0; bottom:0; width:260px; background:var(--bg); border-right:1px solid var(--border); z-index:100; display:flex; flex-direction:column; box-shadow: 4px 0 16px rgba(0,0,0,0.1);">
-        <div class="inspector-nav" style="justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
+        <div class="inspector-nav" style="justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding: 16px 24px;">
           <p class="eyebrow" style="margin:0;">Your Companies</p>
-          <button class="icon-button close-button" aria-label="Close sidebar" onClick={() => setIsSidebarOpen(false)}>X</button>
+          <button class="icon-button close-button" aria-label="Close sidebar" onClick={() => setIsSidebarOpen(false)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
         </div>
         <ul style="flex:1; overflow-y:auto; list-style:none; padding:8px 0; margin:0;">
           <For each={props.companies}>
