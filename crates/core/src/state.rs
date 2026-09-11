@@ -104,7 +104,7 @@ pub struct CompanyState {
 
 impl CompanyState {
     #[cfg(not(target_arch = "wasm32"))]
-    pub async fn init(db_path: &str, token: Option<String>) -> Result<Self, String> {
+    pub async fn init(db_path: &str, token: Option<String>, target_company: Option<String>) -> Result<Self, String> {
         let url = if db_path.contains("://") {
             db_path.to_string()
         } else {
@@ -129,6 +129,10 @@ impl CompanyState {
             db.use_ns("actualised").use_db("core").await
         }).await?;
 
+        if let Some(ref tid) = target_company {
+            db.set("target", tid.clone()).await.map_err(|e| e.to_string())?;
+        }
+
         with_database_timeout("schema initialization", async {
             db.query(
                 "DEFINE TABLE IF NOT EXISTS user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
@@ -145,13 +149,19 @@ impl CompanyState {
         }).await?;
 
         let mut response = with_database_timeout("state hydration", async {
-            db.query(
-                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent;
-                 SELECT record::id(id) AS id, title, description FROM project;
-                 SELECT name, description, parameters FROM tool;
-                 SELECT record::id(id) AS id, name, content FROM shared_file;
-                 SELECT record::id(id) AS id, name FROM company LIMIT 1"
-            ).await
+            let mut q = db.query(
+                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent WHERE company_id =  OR company_id = null;
+                 SELECT record::id(id) AS id, title, description FROM project WHERE company_id =  OR company_id = null;
+                 SELECT name, description, parameters FROM tool WHERE company_id =  OR company_id = null;
+                 SELECT record::id(id) AS id, name, content FROM shared_file WHERE company_id =  OR company_id = null;
+                 "
+            );
+            if target_company.is_some() {
+                q = q.query("SELECT record::id(id) AS id, name FROM company WHERE id =  LIMIT 1");
+            } else {
+                q = q.query("SELECT record::id(id) AS id, name FROM company LIMIT 1");
+            }
+            q.await
         }).await?;
         let agents = response.take::<Vec<Agent>>(0).map_err(|e| e.to_string())?;
         let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
@@ -173,7 +183,7 @@ impl CompanyState {
     }
 
     #[cfg(target_arch = "wasm32")]
-    pub async fn init(_db_path: &str) -> Result<Self, String> {
+    pub async fn init(_db_path: &str, _token: Option<String>, _target_company: Option<String>) -> Result<Self, String> {
         Ok(Self {
             agents: Vec::new(),
             projects: Vec::new(),
@@ -196,6 +206,17 @@ impl CompanyState {
         }
 
         self.company_name = Some(name);
+        Ok(())
+    }
+
+    pub async fn delete_company(&mut self, id: &str) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Cascade delete
+            self.db.query("DELETE agent WHERE company_id = ; DELETE project WHERE company_id = ; DELETE tool WHERE company_id = ; DELETE shared_file WHERE company_id = ; DELETE company WHERE id = ;")
+                .bind(("id", id))
+                .await.map_err(|e| e.to_string())?.check().map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -543,4 +564,16 @@ mod tests {
         let leaf = state.agents.iter().find(|a| a.id == "leaf").unwrap();
         assert_eq!(leaf.parent_id, Some("root".to_string()));
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn get_companies(db_path: &str, token: &str) -> Result<String, String> {
+    let url = if db_path.contains("://") { db_path.to_string() } else { format!("surrealkv://{}", db_path) };
+    let db = connect(&url).await.map_err(|e| e.to_string())?;
+    db.authenticate(token).await.map_err(|e| e.to_string())?;
+    db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
+    
+    let mut response = db.query("SELECT record::id(id) AS id, name FROM company").await.map_err(|e| e.to_string())?;
+    let companies: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
+    serde_json::to_string(&companies).map_err(|e| e.to_string())
 }

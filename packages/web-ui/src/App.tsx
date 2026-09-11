@@ -4,7 +4,7 @@ import cytoscape from 'cytoscape';
 import type { Core, ElementDefinition } from 'cytoscape';
 import type { OrchestratorWasm } from './wasm/actualised_core_wasm.js';
 import { RemoteOrchestrator } from './remote-orchestrator';
-import { createOrchestrator, foundCompany, inspectCompany, signin, signup } from './company-runtime';
+import { createOrchestrator, foundCompany, inspectCompany, signin, signup, getCompanies, deleteCompany, setActiveCompanyId } from './company-runtime';
 import './App.css';
 
 type ScheduledTask = { id: string; description: string; due_date: string; completed: boolean };
@@ -87,7 +87,8 @@ const MemoryTreeView: Component<{ nodes: MemoryNode[]; onOpenFile: (file: Viewed
   </ul>
 );
 
-const Dashboard: Component<{ companyName: string; initialOrchestrator?: OrchestratorClient }> = (props) => {
+const Dashboard: Component<{ companyId: string; companyName: string; companies: Array<{id: string, name: string}>; initialOrchestrator?: OrchestratorClient; onSwitchCompany: (id: string) => void; onAddCompany: () => void }> = (props) => {
+  const [isSidebarOpen, setIsSidebarOpen] = createSignal(false);
   let cyContainer!: HTMLDivElement;
   let cy: Core | undefined;
   let orchestrator: OrchestratorClient | undefined = props.initialOrchestrator;
@@ -433,9 +434,41 @@ const Dashboard: Component<{ companyName: string; initialOrchestrator?: Orchestr
 
   onCleanup(() => cy?.destroy());
 
-  return <main class="canvas-page">
+  return <div class="app-layout" style="display:flex; height:100vh; overflow:hidden;">
+    <Show when={isSidebarOpen()}>
+      <div class="sidebar-overlay" style="position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:90;" onClick={() => setIsSidebarOpen(false)}></div>
+      <aside class="left-sidebar" style="position:fixed; top:0; left:0; bottom:0; width:260px; background:var(--bg); border-right:1px solid var(--border); z-index:100; display:flex; flex-direction:column; box-shadow: 4px 0 16px rgba(0,0,0,0.1);">
+        <div class="inspector-nav" style="justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border);">
+          <p class="eyebrow" style="margin:0;">Your Companies</p>
+          <button class="icon-button close-button" aria-label="Close sidebar" onClick={() => setIsSidebarOpen(false)}>X</button>
+        </div>
+        <ul style="flex:1; overflow-y:auto; list-style:none; padding:8px 0; margin:0;">
+          <For each={props.companies}>
+            {(company) => (
+              <li 
+                style={`padding: 12px 24px; cursor: pointer; display: flex; align-items: center; gap: 8px; ${company.id === props.companyId ? 'background: var(--bg-hover); font-weight: 600;' : ''}`}
+                onClick={() => { setIsSidebarOpen(false); props.onSwitchCompany(company.id); }}
+              >
+                <div style={`width:8px; height:8px; border-radius:50%; ${company.id === props.companyId ? 'background:#c25b3f;' : 'background:transparent;'}`}></div>
+                {company.name}
+              </li>
+            )}
+          </For>
+        </ul>
+        <div style="padding: 16px 24px; border-top: 1px solid var(--border);">
+          <button class="secondary-button" style="width:100%; display:flex; align-items:center; justify-content:center; gap:8px;" onClick={() => { setIsSidebarOpen(false); props.onAddCompany(); }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            New Company
+          </button>
+        </div>
+      </aside>
+    </Show>
+<main class="canvas-page" style="flex:1; position:relative;">
     <header class="canvas-header">
-      <h1>{props.companyName}</h1>
+      <button type="button" class="icon-button" aria-label="Toggle sidebar" onClick={() => setIsSidebarOpen(!isSidebarOpen())}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </button>
+        <h1>{props.companyName}</h1>
       <div class="canvas-actions">
         <span>{agents().length} agents</span>
         <Show when={isOrchestratorRunning() || isContinuousLoop()}>
@@ -770,7 +803,18 @@ const Dashboard: Component<{ companyName: string; initialOrchestrator?: Orchestr
               />
             </label>
           </fieldset>
-          <p class="settings-hint">Stored only in this browser. Google Gemini is the only provider wired up right now — the rest are placeholders.</p>
+          
+          <fieldset class="rate-limit-fieldset" style="margin-top: 24px; border-color: #c25b3f;">
+            <legend style="color: #c25b3f;">Danger Zone</legend>
+            <p style="font-size: 13px; margin-bottom: 12px; color: var(--text-muted);">Permanently delete this company and all of its agents, projects, and files. This action cannot be undone.</p>
+            <button type="button" class="secondary-button" style="color: #c25b3f; border-color: #c25b3f;" onClick={async () => {
+              if (confirm(`Are you sure you want to delete ${props.companyName}?`)) {
+                await deleteCompany(props.companyId);
+                window.location.reload();
+              }
+            }}>Delete Company</button>
+          </fieldset>
+<p class="settings-hint">Stored only in this browser. Google Gemini is the only provider wired up right now — the rest are placeholders.</p>
           <button type="submit" class="primary-button">Save &amp; apply</button>
         </form>
       </aside>
@@ -801,7 +845,7 @@ const Dashboard: Component<{ companyName: string; initialOrchestrator?: Orchestr
         </div>
       </aside>
     </Show>
-  </main>;
+  </main></div>;
 };
 
 const SetupPage: Component<{ onComplete: (companyName: string, orchestrator?: OrchestratorClient) => void }> = (props) => {
@@ -933,32 +977,90 @@ const AuthPage: Component<{ onComplete: () => void }> = (props) => {
 };
 
 const App: Component = () => {
-  const [companyName, setCompanyName] = createSignal<string>();
+  const [companies, setCompanies] = createSignal<Array<{id: string, name: string}>>([]);
+  const [activeCompanyId, setActiveCompanyIdState] = createSignal<string | null>(null);
   const [initialOrchestrator, setInitialOrchestrator] = createSignal<OrchestratorClient>();
+  const [isLoading, setIsLoading] = createSignal(true);
   
   const params = new URLSearchParams(window.location.search);
   const showAuth = params.has('company') || params.has('auth');
-  const [viewState, setViewState] = createSignal(showAuth ? 'auth' : 'setup');
+  const [viewState, setViewState] = createSignal<'auth' | 'setup' | 'dashboard'>(showAuth ? 'auth' : 'setup');
 
-  const completeSetup = (name: string, orchestrator?: OrchestratorClient) => {
-    setInitialOrchestrator(orchestrator);
-    setCompanyName(name);
-    setViewState('dashboard');
+  onSettled(() => {
+    if (showAuth) {
+      setIsLoading(false);
+      return;
+    }
+    void (async () => {
+      try {
+        const userCompanies = await getCompanies();
+        setCompanies(userCompanies);
+        if (userCompanies.length > 0) {
+          const stored = localStorage.getItem('activeCompanyId');
+          const toSelect = userCompanies.find(c => c.id === stored) || userCompanies[0];
+          switchCompany(toSelect.id);
+        } else {
+          setViewState('setup');
+          setIsLoading(false);
+        }
+      } catch {
+        setViewState('setup');
+        setIsLoading(false);
+      }
+    })();
+  });
+
+  const switchCompany = async (id: string) => {
+    setActiveCompanyIdState(id);
+    setActiveCompanyId(id);
+    localStorage.setItem('activeCompanyId', id);
+    try {
+      const result = await inspectCompany();
+      setInitialOrchestrator(result.orchestrator);
+      setViewState('dashboard');
+    } catch {
+      setViewState('setup');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const completeSetup = async (name: string, orchestrator?: OrchestratorClient) => {
+    // Reload companies to get the newly created one
+    const userCompanies = await getCompanies();
+    setCompanies(userCompanies);
+    const newComp = userCompanies.find(c => c.name === name) || userCompanies[userCompanies.length - 1];
+    if (newComp) {
+      switchCompany(newComp.id);
+    } else {
+      // Local WASM mock
+      setInitialOrchestrator(orchestrator);
+      setActiveCompanyIdState('local');
+      setCompanies([{ id: 'local', name }]);
+      setViewState('dashboard');
+    }
   };
   
   const completeAuth = () => {
-    setViewState('setup');
-    // Forcing a full reload so the app rehydrates state from the server properly with new cookies
-    window.location.reload();
+    window.location.search = '';
   };
 
   return (
-    <Show when={viewState() === 'dashboard'} fallback={
-      <Show when={viewState() === 'auth'} fallback={<SetupPage onComplete={completeSetup} />}>
-        <AuthPage onComplete={completeAuth} />
+    <Show when={!isLoading()} fallback={<div style="padding: 40px; text-align: center; color: var(--text-muted);">Loading workspace...</div>}>
+      <Show when={viewState() === 'dashboard'} fallback={
+        <Show when={viewState() === 'auth'} fallback={<SetupPage onComplete={completeSetup} />}>
+          <AuthPage onComplete={completeAuth} />
+        </Show>
+      }>
+        <Dashboard 
+          companyId={activeCompanyId()!} 
+          companyName={companies().find(c => c.id === activeCompanyId())?.name || ''} 
+          companies={companies()} 
+          initialOrchestrator={initialOrchestrator()} 
+          onSwitchCompany={(id) => { setIsLoading(true); switchCompany(id); }}
+          onAddCompany={() => setViewState('setup')}
+        />
       </Show>
-    }>
-      <Dashboard companyName={companyName()!} initialOrchestrator={initialOrchestrator()} />
     </Show>
   );
 };

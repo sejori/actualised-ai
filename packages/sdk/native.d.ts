@@ -1,8 +1,11 @@
 export class Company {
   static init(name: string, mission: string, stateDirectory: string, dbPath: string): Promise<Company>;
-  static initWithToken(name: string, mission: string, stateDirectory: string, dbPath: string, token: string): Promise<Company>;
+  static initWithToken(name: string, mission: string, stateDirectory: string, dbPath: string, token: string, targetCompany?: string): Promise<Company>;
   static signup(dbPath: string, email: string, pass: string): Promise<string>;
   static signin(dbPath: string, email: string, pass: string): Promise<string>;
+  static getCompanies(dbPath: string, token: string): Promise<string>;
+  
+  deleteCompany(id: string): Promise<void>;
   setPacing(requestsPerMinute: number, workingHoursStart?: string, workingHoursEnd?: string): Promise<void>;
   configureInference(configJson: string): Promise<void>;
   getCompanyName(): Promise<string | null>;

@@ -46,3 +46,14 @@ export async function foundCompany(name: string, orchestrator?: SetupOrchestrato
   await orchestrator.found_company(name);
   return orchestrator;
 }
+
+export async function getCompanies() {
+  if (USE_REMOTE) return RemoteOrchestrator.getCompanies();
+  return []; // local mock
+}
+export async function deleteCompany(id: string) {
+  if (USE_REMOTE) return RemoteOrchestrator.deleteCompany(id);
+}
+export function setActiveCompanyId(id?: string) {
+  if (USE_REMOTE) RemoteOrchestrator.activeCompanyId = id;
+}

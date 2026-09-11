@@ -16,10 +16,12 @@ const requireClient = async (c: any) => {
   const token = getCookie(c, 'session_token');
   if (!token) throw new Error('Unauthorized');
   
-  if (clientMap.has(token)) return clientMap.get(token)!;
+  const companyId = c.req.header('X-Company-ID');
+  const cacheKey = `${token}:${companyId || 'default'}`;
+  if (clientMap.has(cacheKey)) return clientMap.get(cacheKey)!;
   
-  const client = await ActualisedClient.createWithToken(process.env.SURREALDB_URL || 'mem://', token);
-  clientMap.set(token, client);
+  const client = await ActualisedClient.createWithToken(process.env.SURREALDB_URL || 'mem://', token, companyId);
+  clientMap.set(cacheKey, client);
   return client;
 };
 
@@ -70,6 +72,23 @@ app.post('/api/auth/signin', async (c) => {
 app.post('/api/auth/logout', async (c) => {
   setCookie(c, 'session_token', '', { path: '/', maxAge: 0 });
   return c.json({ success: true });
+});
+
+
+app.get('/api/companies', async (c) => {
+  const token = getCookie(c, 'session_token');
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+  return c.json(await ActualisedClient.getCompanies(process.env.SURREALDB_URL || 'mem://', token));
+});
+
+app.delete('/api/companies/:id', async (c) => {
+  const id = c.req.param('id');
+  const client = await requireClient(c);
+  await client.deleteCompany(id);
+  // Optional: clear cache keys for this company
+  const token = getCookie(c, 'session_token');
+  clientMap.delete(`${token}:${id}`);
+  return c.json({ deleted: true });
 });
 
 app.get('/api/bootstrap', async (c) => c.json(await snapshot(await requireClient(c))));

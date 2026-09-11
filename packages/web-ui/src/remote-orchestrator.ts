@@ -1,9 +1,13 @@
 type Bootstrap = { company_name: string | null; agents: unknown[]; projects: unknown[]; tools: unknown[] };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (RemoteOrchestrator.activeCompanyId) {
+    headers['X-Company-ID'] = RemoteOrchestrator.activeCompanyId;
+  }
   const response = await fetch(path, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: { ...headers, ...init?.headers },
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string };
@@ -13,6 +17,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export class RemoteOrchestrator {
+  static activeCompanyId: string | undefined;
   private constructor(private state: Bootstrap) {}
 
   static async init() {
@@ -25,6 +30,14 @@ export class RemoteOrchestrator {
 
   static async signin(email: string, pass: string) {
     return request<{ success: boolean }>('/api/auth/signin', { method: 'POST', body: JSON.stringify({ email, pass }) });
+  }
+
+  static async getCompanies() {
+    return request<Array<{ id: string; name: string }>>('/api/companies');
+  }
+
+  static async deleteCompany(id: string) {
+    return request(`/api/companies/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   static async getCompanyName() {

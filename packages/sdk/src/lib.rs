@@ -38,7 +38,7 @@ impl Company {
     #[napi]
     pub async fn init(name: String, mission: String, state_directory: String, db_path: String) -> napi::Result<Self> {
         println!("Initializing Company: {} - Mission: {}", name, mission);
-        let mut state = CompanyState::init(&db_path, None).await
+        let mut state = CompanyState::init(&db_path, None, None).await
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         if !state.agents.is_empty() && state.company_name.is_none() {
             state.set_company_name("Pawsome".to_string()).await
@@ -58,9 +58,9 @@ impl Company {
     }
 
     #[napi]
-    pub async fn init_with_token(name: String, mission: String, state_directory: String, db_path: String, token: String) -> napi::Result<Self> {
+    pub async fn init_with_token(name: String, mission: String, state_directory: String, db_path: String, token: String, target_company: Option<String>) -> napi::Result<Self> {
         println!("Initializing Authenticated Company: {} - Mission: {}", name, mission);
-        let mut state = CompanyState::init(&db_path, Some(token)).await
+        let mut state = CompanyState::init(&db_path, Some(token), target_company).await
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         if !state.agents.is_empty() && state.company_name.is_none() {
             state.set_company_name("Pawsome".to_string()).await
@@ -86,6 +86,11 @@ impl Company {
     }
 
     #[napi]
+    pub async fn get_companies(db_path: String, token: String) -> napi::Result<String> {
+        actualised_core::state::get_companies(&db_path, &token).await.map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
     pub async fn signin(db_path: String, email: String, pass: String) -> napi::Result<String> {
         actualised_core::auth::signin(&db_path, &email, &pass).await
             .map_err(napi::Error::from_reason)
@@ -95,6 +100,11 @@ impl Company {
     #[napi]
     pub async fn get_company_name(&self) -> Option<String> {
         self.orchestrator.lock().await.state.company_name.clone()
+    }
+
+    #[napi]
+    pub async fn delete_company(&self, id: String) -> napi::Result<()> {
+        self.orchestrator.lock().await.state.delete_company(&id).await.map_err(napi::Error::from_reason)
     }
 
     #[napi]
