@@ -70,6 +70,7 @@ pub struct Agent {
     pub telemetry: Option<AgentTelemetry>,
     pub scheduled_tasks: Option<Vec<ScheduledTask>>,
     pub pending_messages: Option<Vec<String>>,
+    pub issue_triggers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -83,11 +84,31 @@ pub struct Project {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
-pub struct SharedFile {
+pub struct RepositoryConfig {
+    pub provider: String,
+    pub repo_url: String,
+    pub access_token: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
+pub struct IssueComment {
+    pub author: String,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
+pub struct Issue {
     pub company_id: Option<String>,
     pub id: String,
-    pub name: String,
-    pub content: String,
+    pub title: String,
+    pub body: String,
+    pub state: String,
+    pub labels: Vec<String>,
+    pub comments: Vec<IssueComment>,
+    pub assignee: Option<String>,
 }
 
 /// Abstract representation of the company state (SurrealDB or in-memory)
@@ -97,7 +118,8 @@ pub struct CompanyState {
     pub agents: Vec<Agent>,
     pub projects: Vec<Project>,
     pub tools: Vec<Tool>,
-    pub shared_files: Vec<SharedFile>,
+    pub issues: Vec<Issue>,
+    pub repository: Option<RepositoryConfig>,
     pub company_name: Option<String>,
     pub company_id: Option<String>,
 }
@@ -144,16 +166,16 @@ impl CompanyState {
                  DEFINE TABLE IF NOT EXISTS agent SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
                  DEFINE TABLE IF NOT EXISTS project SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
                  DEFINE TABLE IF NOT EXISTS tool SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                 DEFINE TABLE IF NOT EXISTS shared_file SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
+                 DEFINE TABLE IF NOT EXISTS issue SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
             ).await?.check()
         }).await?;
 
         let mut response = with_database_timeout("state hydration", async {
             let mut q = db.query(
-                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages FROM agent WHERE company_id = $target OR company_id = null;
+                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent WHERE company_id = $target OR company_id = null;
                  SELECT record::id(id) AS id, title, description FROM project WHERE company_id = $target OR company_id = null;
                  SELECT name, description, parameters FROM tool WHERE company_id = $target OR company_id = null;
-                 SELECT record::id(id) AS id, name, content FROM shared_file WHERE company_id = $target OR company_id = null;
+                 SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = $target OR company_id = null;
                  "
             );
             if target_company.is_some() {
@@ -166,7 +188,7 @@ impl CompanyState {
         let agents = response.take::<Vec<Agent>>(0).map_err(|e| e.to_string())?;
         let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
         let tools = response.take::<Vec<Tool>>(2).map_err(|e| e.to_string())?;
-        let shared_files = response.take::<Vec<SharedFile>>(3).map_err(|e| e.to_string())?;
+        let issues = response.take::<Vec<Issue>>(3).map_err(|e| e.to_string())?;
         let company_docs = response.take::<Vec<serde_json::Value>>(4).map_err(|e| e.to_string())?;
         let company_id = company_docs.first().and_then(|d| d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
         let company_name = company_docs.first().and_then(|d| d.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()));
@@ -176,7 +198,8 @@ impl CompanyState {
             agents,
             projects,
             tools,
-            shared_files,
+            issues,
+            repository: None,
             company_name,
             company_id,
         })
@@ -188,7 +211,8 @@ impl CompanyState {
             agents: Vec::new(),
             projects: Vec::new(),
             tools: Vec::new(),
-            shared_files: Vec::new(),
+            issues: Vec::new(),
+            repository: None,
             company_name: None,
             company_id: None,
         })
@@ -412,33 +436,9 @@ impl CompanyState {
 
     // --- Shared Files ---
 
-    pub async fn add_shared_file(&mut self, file: SharedFile) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            let content = record_content(&file)?;
-            self.db
-                .query("UPDATE $record CONTENT $file")
-                .bind(("record", RecordId::new("shared_file", file.id.clone())))
-                .bind(("file", content))
-                .await.map_err(|e| e.to_string())?
-                .check().map_err(|e| e.to_string())?;
-        }
+    
 
-        self.shared_files.push(file);
-        Ok(())
-    }
-
-    pub async fn remove_shared_file(&mut self, id: &str) -> Result<(), String> {
-        #[cfg(not(target_arch = "wasm32"))]
-        self.db
-            .query("DELETE $record")
-            .bind(("record", RecordId::new("shared_file", id)))
-            .await.map_err(|e| e.to_string())?
-            .check().map_err(|e| e.to_string())?;
-
-        self.shared_files.retain(|f| f.id != id);
-        Ok(())
-    }
+    
 }
 
 #[cfg(test)]
@@ -455,7 +455,7 @@ mod tests {
             tools: vec![],
             telemetry: None,
             scheduled_tasks: None,
-            pending_messages: None, company_id: None,
+            pending_messages: None, issue_triggers: None, company_id: None,
         }
     }
 
