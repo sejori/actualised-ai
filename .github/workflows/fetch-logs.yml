@@ -1,0 +1,27 @@
+name: Fetch Cloud Run Logs
+
+on:
+  push:
+    branches:
+      - read-logs
+
+jobs:
+  fetch-logs:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+          service_account: '${{ secrets.WSA_EMAIL }}'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Fetch Logs
+        run: |
+          gcloud run services logs read actualised-orchestrator --region europe-west2 --project gen-lang-client-0676741409 --limit 100
