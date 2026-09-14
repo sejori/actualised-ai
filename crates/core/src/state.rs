@@ -537,7 +537,7 @@ mod tests {
 
         // agent2 should be the new root, agent1 should report to agent2
         assert_eq!(agent2.parent_id, None);
-        assert_eq!(agent1.parent_id, Some("agent2".to_string()));
+        assert_eq!(agent1.parent_id, Some("agent:agent2".to_string()));
     }
 
     #[tokio::test]

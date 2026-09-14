@@ -11,8 +11,8 @@ env:
   RUSTFLAGS: "--cfg surrealdb_unstable"
 
 jobs:
-  build_and_test:
-    name: Build and Test Rust Core
+  test:
+    name: Rust Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -20,25 +20,21 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
+
+    # Faster toolchain setup (no extra apt installs)
     - name: Set up Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: stable
-        override: true
-        
-    - name: Cache cargo registry
-      uses: actions/cache@v3
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
+      uses: dtolnay/rust-toolchain@stable
 
-    - name: Build
-      run: cargo build --verbose
-      
+    # Caches the full target/ dir — the main compile-time win
+    - name: Cache Rust build
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: "crates/core -> target"
+
+    # cargo-nextest: parallel test runner, ~2-3x faster than cargo test
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@nextest
+
+    # Single step: compiles + runs all tests; --no-fail-fast reports all failures
     - name: Run tests
-      run: cargo test --verbose
-
+      run: cargo nextest run --no-fail-fast
