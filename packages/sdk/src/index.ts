@@ -45,8 +45,8 @@ static async create(dbPath: string): Promise<ActualisedClient> {
     return new ActualisedClient(company);
   }
 
-  static async createWithToken(dbPath: string, token: string): Promise<ActualisedClient> {
-    const company = await Company.initWithToken('Test Co', 'Testing', 'state', dbPath, token);
+  static async createWithToken(dbPath: string, token: string, companyId?: string): Promise<ActualisedClient> {
+    const company = await Company.initWithToken('Test Co', 'Testing', 'state', dbPath, token, companyId || undefined);
     return new ActualisedClient(company);
   }
 
@@ -56,6 +56,18 @@ static async create(dbPath: string): Promise<ActualisedClient> {
 
   static async signin(dbPath: string, email: string, pass: string): Promise<string> {
     return Company.signin(dbPath, email, pass);
+  }
+
+  static async getCompanies(dbPath: string, token: string): Promise<unknown[]> {
+    return JSON.parse(await Company.getCompanies(dbPath, token));
+  }
+
+  async deleteCompany(id: string): Promise<void> {
+    await this.company.deleteCompany(id);
+  }
+
+  async syncIssue(issueJson: string): Promise<void> {
+    await this.company.syncIssue(issueJson);
   }
 
   getCompanyName(): Promise<string | null> {

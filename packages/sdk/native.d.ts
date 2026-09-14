@@ -25,4 +25,5 @@ export class Company {
   queueMessage(agentId: string, message: string): Promise<void>;
   registerToolExecutor(executor: (agentId: string, toolName: string, argsJson: string) => string): void;
   start(): Promise<void>;
+  syncIssue(issueJson: string): Promise<void>;
 }

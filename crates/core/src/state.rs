@@ -218,6 +218,21 @@ impl CompanyState {
         })
     }
 
+    pub async fn upsert_issue(&mut self, issue: Issue) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.db
+                .query("UPDATE type::thing('issue', $id) MERGE $content")
+                .bind(("id", issue.id.clone()))
+                .bind(("content", issue.clone()))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
+        }
+        self.issues.retain(|i| i.id != issue.id);
+        self.issues.push(issue);
+        Ok(())
+    }
+
     pub async fn set_company_name(&mut self, name: String) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {

@@ -220,4 +220,67 @@ impl Company {
             .map_err(napi::Error::from_reason)
     }
 
+    
+    #[napi]
+    pub async fn get_shared_tree(&self) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.get_shared_tree())
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
     }
+
+    #[napi]
+    pub async fn get_agent_memory_tree(&self, agent_id: String) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.get_agent_memory_tree(&agent_id))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn get_agent_context(&self, agent_id: String) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.get_agent_context(&agent_id))
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn queue_message(&self, agent_id: String, message: String) -> napi::Result<()> {
+        self.orchestrator.lock().await.queue_message(&agent_id, message).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn start(&self) -> napi::Result<()> {
+        let mut orchestrator = self.orchestrator.lock().await;
+        if let Some(ref executor) = self.tool_executor {
+            orchestrator.set_tool_executor(executor.clone());
+        }
+        orchestrator.run().await;
+        Ok(())
+    }
+
+    #[napi]
+    pub async fn sync_issue(&self, issue_json: String) -> napi::Result<()> {
+        let issue: actualised_core::state::Issue = serde_json::from_str(&issue_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let mut orchestrator = self.orchestrator.lock().await;
+        
+        // Add to db cache
+        orchestrator.state.upsert_issue(issue.clone()).await
+            .map_err(napi::Error::from_reason)?;
+            
+        // Assign to the agent's issue_triggers
+        if let Some(assignee) = issue.assignee {
+            // Find agent with this email/id
+            // In our system, agent.id is the username/email
+            if let Some(mut agent) = orchestrator.state.agents.iter().find(|a| a.id == assignee).cloned() {
+                let triggers = agent.issue_triggers.get_or_insert_with(Vec::new);
+                if !triggers.contains(&issue.id) && issue.state != "closed" {
+                    triggers.push(issue.id.clone());
+                    let _ = orchestrator.state.update_agent(&agent.id.clone(), agent).await;
+                } else if issue.state == "closed" {
+                    triggers.retain(|id| id != &issue.id);
+                    let _ = orchestrator.state.update_agent(&agent.id.clone(), agent).await;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+}
