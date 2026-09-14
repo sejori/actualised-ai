@@ -134,7 +134,7 @@ impl CompanyState {
         };
         let db = with_database_timeout("connection", async { connect(&url).await }).await?;
 
-        if let Some(tok) = token {
+        if let Some(ref tok) = token {
             with_database_timeout("token authentication", async {
                 db.authenticate(tok).await
             }).await?;
