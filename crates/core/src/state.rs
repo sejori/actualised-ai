@@ -298,13 +298,14 @@ impl CompanyState {
     }
 
     pub async fn update_agent(&mut self, id: &str, mut new_agent: Agent) -> Result<(), String> {
+        let target_id = if id.contains(':') { id.to_string() } else { format!("agent:{}", id) };
         let mut updates_needed = Vec::new();
-        let was_root = self.agents.iter().find(|a| a.id == id).map(|a| a.parent_id.is_none()).unwrap_or(false);
+        let was_root = self.agents.iter().find(|a| a.id == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);
 
         if new_agent.parent_id.is_none() {
             for a in self.agents.iter_mut() {
-                if a.id != id && a.parent_id.is_none() {
-                    a.parent_id = Some(id.to_string());
+                if a.id != target_id && a.parent_id.is_none() {
+                    a.parent_id = Some(target_id.clone());
                     updates_needed.push(a.clone());
                 }
             }
@@ -318,7 +319,7 @@ impl CompanyState {
             }
         }
 
-        if let Some(idx) = self.agents.iter().position(|a| a.id == id) {
+        if let Some(idx) = self.agents.iter().position(|a| a.id == target_id) {
             self.agents[idx] = new_agent.clone();
             updates_needed.push(new_agent);
         }
@@ -328,7 +329,7 @@ impl CompanyState {
             let content = record_content(&ag)?;
             let mut _res = self.db
                 .query("UPDATE $record CONTENT $agent")
-                .bind(("record", RecordId::new("agent", ag.id.clone())))
+                .bind(("record", RecordId::new("agent", ag.id.trim_start_matches("agent:"))))
                 .bind(("agent", content))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
@@ -338,41 +339,40 @@ impl CompanyState {
     }
 
     pub async fn remove_agent(&mut self, id: &str) -> Result<(), String> {
-        let is_root = self.agents.iter().find(|a| a.id == id).map(|a| a.parent_id.is_none()).unwrap_or(false);
-        let parent_id = self.agents.iter().find(|a| a.id == id).and_then(|a| a.parent_id.clone());
+        let target_id = if id.contains(':') { id.to_string() } else { format!("agent:{}", id) };
+        let is_root = self.agents.iter().find(|a| a.id == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);
+        let parent_id = self.agents.iter().find(|a| a.id == target_id).and_then(|a| a.parent_id.clone());
         let mut updates_needed = Vec::new();
 
         if is_root {
-            let next_root = self.agents.iter().find(|a| a.parent_id.as_deref() == Some(id)).map(|a| a.id.clone())
-                .or_else(|| self.agents.iter().find(|a| a.id != id).map(|a| a.id.clone()));
-                
-            if let Some(next_root_id) = next_root {
+            let next_root = self.agents.iter().find(|a| a.parent_id.as_deref() == Some(&target_id)).map(|a| a.id.clone());
+            if let Some(new_root_id) = next_root {
                 for a in self.agents.iter_mut() {
-                    if a.id == next_root_id {
+                    if a.id == new_root_id {
                         a.parent_id = None;
                         updates_needed.push(a.clone());
-                    } else if a.parent_id.as_deref() == Some(id) {
-                        a.parent_id = Some(next_root_id.clone());
+                    } else if a.parent_id.as_deref() == Some(&target_id) {
+                        a.parent_id = Some(new_root_id.clone());
                         updates_needed.push(a.clone());
                     }
                 }
             }
         } else {
             for a in self.agents.iter_mut() {
-                if a.parent_id.as_deref() == Some(id) {
+                if a.parent_id.as_deref() == Some(&target_id) {
                     a.parent_id = parent_id.clone();
                     updates_needed.push(a.clone());
                 }
             }
         }
 
-        self.agents.retain(|a| a.id != id);
+        self.agents.retain(|a| a.id != target_id);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             let mut _res = self.db
                 .query("DELETE $record")
-                .bind(("record", RecordId::new("agent", id)))
+                .bind(("record", RecordId::new("agent", target_id.trim_start_matches("agent:"))))
                 .await.map_err(|e| e.to_string())?
                 .check().map_err(|e| e.to_string())?;
 
@@ -380,7 +380,7 @@ impl CompanyState {
                 let content = record_content(&ag)?;
                 let mut _res = self.db
                     .query("UPDATE $record CONTENT $agent")
-                    .bind(("record", RecordId::new("agent", ag.id.clone())))
+                    .bind(("record", RecordId::new("agent", ag.id.trim_start_matches("agent:"))))
                     .bind(("agent", content))
                     .await.map_err(|e| e.to_string())?
                     .check().map_err(|e| e.to_string())?;
