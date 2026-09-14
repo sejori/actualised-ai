@@ -13,3 +13,19 @@ export async function inspectCompany() {
 export async function foundCompany(name: string) {
   return RemoteOrchestrator.foundCompany(name);
 }
+export async function signup(email: string, pass: string) {
+  await RemoteOrchestrator.signup(email, pass);
+}
+export async function signin(email: string, pass: string) {
+  await RemoteOrchestrator.signin(email, pass);
+}
+
+export async function getCompanies() {
+  return RemoteOrchestrator.getCompanies();
+}
+export async function deleteCompany(id: string) {
+  return RemoteOrchestrator.deleteCompany(id);
+}
+export function setActiveCompanyId(id?: string) {
+  RemoteOrchestrator.activeCompanyId = id;
+}
