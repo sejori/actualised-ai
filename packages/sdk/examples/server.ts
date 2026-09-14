@@ -10,6 +10,11 @@ const port = Number(process.env.PORT) || 8080;
 const streamClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const encoder = new TextEncoder();
 
+// Update schema on boot using root credentials
+ActualisedClient.create(process.env.SURREALDB_URL || 'mem://')
+  .then(() => console.log('Successfully updated SurrealDB schema on boot'))
+  .catch(e => console.error('Failed to update schema on boot', e));
+
 const clientMap = new Map<string, ActualisedClient>();
 
 const requireClient = async (c: any) => {
