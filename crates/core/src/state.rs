@@ -175,16 +175,21 @@ impl CompanyState {
 
         let mut response = with_database_timeout("state hydration", async {
             if let Some(ref target) = target_company {
+                let full_target = if target.contains(':') {
+                    target.clone()
+                } else {
+                    format!("company:{}", target)
+                };
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
+                    "SELECT record::id(id) AS id, name, role, record::id(parent_id) AS parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, name FROM company WHERE id = type::record($target) LIMIT 1"
-                ).bind(("target", target.clone())).await
+                ).bind(("target", full_target)).await
             } else {
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent;
+                    "SELECT record::id(id) AS id, name, role, record::id(parent_id) AS parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent;
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
