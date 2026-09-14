@@ -467,10 +467,10 @@ mod tests {
 
     fn create_agent(id: &str, parent_id: Option<&str>) -> Agent {
         Agent {
-            id: id.to_string(),
+            id: if id.contains(':') { id.to_string() } else { format!("agent:{}", id) },
             name: "Test Agent".to_string(),
             role: "Role".to_string(),
-            parent_id: parent_id.map(|s| s.to_string()),
+            parent_id: parent_id.map(|s| if s.contains(':') { s.to_string() } else { format!("agent:{}", s) }),
             system_prompt: "Prompt".to_string(),
             tools: vec![],
             telemetry: None,
@@ -524,11 +524,11 @@ mod tests {
         let updated_child = create_agent("child", None);
         state.update_agent("child", updated_child).await.unwrap();
 
-        let old_root = state.agents.iter().find(|a| a.id == "root").unwrap();
-        let new_root = state.agents.iter().find(|a| a.id == "child").unwrap();
+        let old_root = state.agents.iter().find(|a| a.id == "agent:root").unwrap();
+        let new_root = state.agents.iter().find(|a| a.id == "agent:child").unwrap();
 
         assert_eq!(new_root.parent_id, None);
-        assert_eq!(old_root.parent_id, Some("child".to_string()));
+        assert_eq!(old_root.parent_id, Some("agent:child".to_string()));
     }
 
     #[tokio::test]
@@ -542,11 +542,11 @@ mod tests {
         let updated_root = create_agent("root", Some("manager"));
         state.update_agent("root", updated_root).await.unwrap();
 
-        let old_root = state.agents.iter().find(|a| a.id == "root").unwrap();
-        let new_root = state.agents.iter().find(|a| a.id == "manager").unwrap();
+        let old_root = state.agents.iter().find(|a| a.id == "agent:root").unwrap();
+        let new_root = state.agents.iter().find(|a| a.id == "agent:manager").unwrap();
 
         assert_eq!(new_root.parent_id, None);
-        assert_eq!(old_root.parent_id, Some("manager".to_string()));
+        assert_eq!(old_root.parent_id, Some("agent:manager".to_string()));
     }
 
     #[tokio::test]
@@ -584,7 +584,22 @@ mod tests {
         let leaf = state.agents.iter().find(|a| a.id == "leaf").unwrap();
         assert_eq!(leaf.parent_id, Some("root".to_string()));
     }
+
+    #[tokio::test]
+    async fn test_update_agent_fixes_missing_prefix() {
+        let mut state = create_state().await;
+        state.add_agent(create_agent("agent:some_bot", None)).await.unwrap();
+
+        // Update with un-prefixed id
+        let mut updated = create_agent("agent:some_bot", None);
+        updated.pending_messages = Some(vec!["hello".to_string()]);
+        state.update_agent("some_bot", updated).await.unwrap();
+
+        let agent = state.agents.iter().find(|a| a.id == "agent:some_bot").unwrap();
+        assert_eq!(agent.pending_messages, Some(vec!["hello".to_string()]));
+    }
 }
+
 
 #[cfg(not(target_arch = "wasm32"))]
 pub async fn get_companies(db_path: &str, token: &str) -> Result<String, String> {
