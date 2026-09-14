@@ -159,16 +159,16 @@ impl CompanyState {
         if token.is_none() {
             with_database_timeout("schema initialization", async {
                 db.query(
-                    "DEFINE TABLE user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
-                     DEFINE ACCESS user ON DATABASE TYPE RECORD
+                    "DEFINE TABLE OVERWRITE user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
+                     DEFINE ACCESS OVERWRITE user ON DATABASE TYPE RECORD
                         SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
                         SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
-                     DEFINE TABLE company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
-                    DEFINE TABLE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                    DEFINE TABLE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                    DEFINE TABLE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                    DEFINE TABLE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
+                     DEFINE TABLE OVERWRITE company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
+                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
                 ).await?.check()
             }).await?;
         }
