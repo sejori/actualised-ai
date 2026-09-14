@@ -15,7 +15,9 @@ impl std::fmt::Display for VcsError {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(not(target_arch = "wasm32"))]
 pub trait VersionControl: Send + Sync {
     async fn read_file(&self, path: &str) -> Result<String, VcsError>;
     async fn write_file(&self, path: &str, content: &str, message: &str) -> Result<(), VcsError>;
@@ -23,8 +25,29 @@ pub trait VersionControl: Send + Sync {
     async fn search_codebase(&self, query: &str) -> Result<Vec<String>, VcsError>;
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(target_arch = "wasm32")]
+pub trait VersionControl {
+    async fn read_file(&self, path: &str) -> Result<String, VcsError>;
+    async fn write_file(&self, path: &str, content: &str, message: &str) -> Result<(), VcsError>;
+    async fn list_directory(&self, path: &str) -> Result<Vec<String>, VcsError>;
+    async fn search_codebase(&self, query: &str) -> Result<Vec<String>, VcsError>;
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(not(target_arch = "wasm32"))]
 pub trait IssueTracker: Send + Sync {
+    async fn create_issue(&self, title: &str, body: &str, labels: &[String]) -> Result<String, VcsError>;
+    async fn add_comment(&self, issue_id: &str, comment: &str) -> Result<(), VcsError>;
+    async fn close_issue(&self, issue_id: &str) -> Result<(), VcsError>;
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg(target_arch = "wasm32")]
+pub trait IssueTracker {
     async fn create_issue(&self, title: &str, body: &str, labels: &[String]) -> Result<String, VcsError>;
     async fn add_comment(&self, issue_id: &str, comment: &str) -> Result<(), VcsError>;
     async fn close_issue(&self, issue_id: &str) -> Result<(), VcsError>;

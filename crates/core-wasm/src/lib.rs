@@ -1,5 +1,5 @@
 use wasm_bindgen::prelude::*;
-use actualised_core::state::{CompanyState, Agent, Project, SharedFile};
+use actualised_core::state::{CompanyState, Agent, Project};
 use actualised_core::default_company::seed_default_company;
 use actualised_core::memory::MemoryManager;
 use actualised_core::orchestrator::Orchestrator;
@@ -126,26 +126,12 @@ impl OrchestratorWasm {
 
     #[wasm_bindgen]
     pub fn get_shared_files(&self) -> Result<JsValue, JsValue> {
-        serde_wasm_bindgen::to_value(&self.inner.state.shared_files)
+        serde_wasm_bindgen::to_value(&self.inner.state.issues)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
     }
 
-    #[wasm_bindgen]
-    pub async fn add_shared_file(&mut self, file_json: JsValue) -> Result<(), JsValue> {
-        let file: SharedFile = serde_wasm_bindgen::from_value(file_json)
-            .map_err(|e| JsValue::from_str(&format!("Invalid SharedFile JSON: {}", e)))?;
-        self.inner.state.add_shared_file(file).await
-            .map_err(|e| JsValue::from_str(&format!("Failed to add shared file: {}", e)))?;
-        Ok(())
-    }
-
-    #[wasm_bindgen]
-    pub async fn remove_shared_file(&mut self, id: &str) -> Result<(), JsValue> {
-        self.inner.state.remove_shared_file(id).await
-            .map_err(|e| JsValue::from_str(&format!("Failed to remove shared file: {}", e)))?;
-        Ok(())
-    }
-
+    
+    
     // --- Projects ---
     #[wasm_bindgen]
     pub async fn add_project(&mut self, project_json: JsValue) -> Result<(), JsValue> {

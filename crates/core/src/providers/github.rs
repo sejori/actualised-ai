@@ -29,7 +29,8 @@ impl GithubProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl VersionControl for GithubProvider {
     async fn read_file(&self, path: &str) -> Result<String, VcsError> {
         let url = format!("https://api.github.com/repos/{}/contents/{}", self.repo_url, path);
@@ -68,7 +69,8 @@ impl VersionControl for GithubProvider {
     }
 }
 
-#[async_trait]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl IssueTracker for GithubProvider {
     async fn create_issue(&self, title: &str, body: &str, labels: &[String]) -> Result<String, VcsError> {
         Err(VcsError("Not implemented".to_string()))
