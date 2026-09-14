@@ -174,19 +174,23 @@ impl CompanyState {
         }
 
         let mut response = with_database_timeout("state hydration", async {
-            let mut q = db.query(
-                "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
-                 SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
-                 SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
-                 SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
-                 "
-            );
-            if target_company.is_some() {
-                q = q.query("SELECT record::id(id) AS id, name FROM company WHERE id = type::record($target) LIMIT 1");
+            if let Some(ref target) = target_company {
+                db.query(
+                    "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
+                     SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
+                     SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
+                     SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
+                     SELECT record::id(id) AS id, name FROM company WHERE id = type::record($target) LIMIT 1"
+                ).bind(("target", target.clone())).await
             } else {
-                q = q.query("SELECT record::id(id) AS id, name FROM company LIMIT 1");
+                db.query(
+                    "SELECT record::id(id) AS id, name, role, parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent;
+                     SELECT record::id(id) AS id, title, description FROM project;
+                     SELECT name, description, parameters FROM tool;
+                     SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
+                     SELECT record::id(id) AS id, name FROM company LIMIT 1"
+                ).await
             }
-            q.await
         }).await?;
         let agents = response.take::<Vec<Agent>>(0).map_err(|e| e.to_string())?;
         let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
