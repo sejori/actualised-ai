@@ -162,22 +162,38 @@ app.post('/api/webhooks/telegram', async (c) => {
   const payload = await c.req.json();
   if (payload && payload.message && payload.message.text) {
     const text = payload.message.text;
+    const chatId = payload.message.chat?.id;
     const client = await requireClient(c);
-    
-    // We queue the telegram message directly to the Project Manager's context
-    // and instruct them to handle it.
+
+    // Send "typing..." indicator immediately for instant feedback
+    if (chatId && process.env.TELEGRAM_TOKEN) {
+      fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendChatAction`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+      }).catch(() => {});
+    }
+
+    // Find the root agent dynamically (parent_id = null) so any agent hierarchy works
+    const agents = await client.getAgents();
+    const rootAgent = agents.find((a: any) => !a.parent_id);
+    if (!rootAgent) {
+      console.error('Telegram webhook: no root agent found');
+      return c.json({ ok: true });
+    }
+
     const instruction = `[TELEGRAM MESSAGE FROM USER]: ${text}
 
 NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
-    
+
     // Process asynchronously so we can return 200 OK immediately and prevent Telegram webhook timeouts/retries
     setTimeout(async () => {
       try {
-        await client.queueMessage('node_project_manager', instruction); // Blocks here if inference is active
-        await client.start(); // Triggers response, blocking subsequent tasks linearly
+        await client.queueMessage(rootAgent.id, instruction);
+        await client.start();
         publishStateChanged();
       } catch (e) {
-        console.error("Telegram background processing error:", e);
+        console.error('Telegram background processing error:', e);
       }
     }, 0);
   }
