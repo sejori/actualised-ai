@@ -523,8 +523,8 @@ mod tests {
 
         assert_eq!(state.agents.len(), 2);
         
-        let agent1 = state.agents.iter().find(|a| a.id == "agent1").unwrap();
-        let agent2 = state.agents.iter().find(|a| a.id == "agent2").unwrap();
+        let agent1 = state.agents.iter().find(|a| a.id == "agent:agent1").unwrap();
+        let agent2 = state.agents.iter().find(|a| a.id == "agent:agent2").unwrap();
 
         // agent2 should be the new root, agent1 should report to agent2
         assert_eq!(agent2.parent_id, None);
@@ -599,8 +599,8 @@ mod tests {
 
         assert_eq!(state.agents.len(), 2);
         
-        let leaf = state.agents.iter().find(|a| a.id == "leaf").unwrap();
-        assert_eq!(leaf.parent_id, Some("root".to_string()));
+        let leaf = state.agents.iter().find(|a| a.id == "agent:leaf").unwrap();
+        assert_eq!(leaf.parent_id, Some("agent:root".to_string()));
     }
 
     #[tokio::test]
