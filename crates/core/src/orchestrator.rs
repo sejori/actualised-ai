@@ -52,10 +52,20 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     pub fn new(state: CompanyState, memory: MemoryManager) -> Self {
+        // Fallback to environment variable for headless webhook scenarios where the client hasn't been configured via the UI yet.
+        let default_inference: Box<dyn InferenceEngine> = if let Ok(api_key) = std::env::var("GEMINI_API_KEY") {
+            Box::new(crate::inference::GeminiInferenceEngine {
+                api_key,
+                model: "gemini-3.6-flash".to_string(),
+            })
+        } else {
+            Box::new(crate::inference::MockInferenceEngine)
+        };
+
         Self {
             state,
             task_graph: DiGraph::new(),
-            inference: Box::new(MockInferenceEngine),
+            inference: default_inference,
             memory,
             rate_limit: RateLimitConfig::default(),
             agent_contexts: HashMap::new(),

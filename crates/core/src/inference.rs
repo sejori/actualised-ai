@@ -91,13 +91,18 @@ pub struct InferenceConfig {
 /// Builds the engine matching a user's chosen provider. Falls back to the mock engine
 /// when the provider is unrecognised or no API key was supplied.
 pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
-    if config.api_key.trim().is_empty() {
-        return Box::new(MockInferenceEngine);
+    let mut resolved_key = config.api_key.clone();
+    if resolved_key.trim().is_empty() {
+        if let Ok(env_key) = std::env::var("GEMINI_API_KEY") {
+            resolved_key = env_key;
+        } else {
+            return Box::new(MockInferenceEngine);
+        }
     }
 
     match config.provider.as_str() {
         "gemini" => Box::new(GeminiInferenceEngine {
-            api_key: config.api_key.clone(),
+            api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gemini-3.6-flash".to_string() } else { config.model.clone() },
         }),
         _ => Box::new(MockInferenceEngine),

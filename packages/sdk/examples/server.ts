@@ -16,7 +16,19 @@ const requireClient = async (c: any) => {
   const token = getCookie(c, 'session_token') || c.req.query('token');
   if (!token) throw new Error('Unauthorized');
   
-  const companyId = c.req.header('X-Company-ID');
+  let companyId = c.req.header('X-Company-ID');
+  
+  // For webhooks, if no explicit company header is provided, fallback to the query parameter or the user's first available company.
+  if (!companyId) {
+    companyId = c.req.query('companyId');
+    if (!companyId) {
+      const companies = await ActualisedClient.getCompanies(process.env.SURREALDB_URL || 'mem://', token);
+      if (companies && companies.length > 0) {
+        companyId = (companies[0] as any).id;
+      }
+    }
+  }
+  
   const cacheKey = `${token}:${companyId || 'default'}`;
   if (clientMap.has(cacheKey)) return clientMap.get(cacheKey)!;
   
