@@ -155,20 +155,23 @@ impl CompanyState {
             db.set("target", tid.clone()).await.map_err(|e| e.to_string())?;
         }
 
-        with_database_timeout("schema initialization", async {
-            db.query(
-                "DEFINE TABLE IF NOT EXISTS user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
-                 DEFINE ACCESS user ON DATABASE TYPE RECORD
-                    SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
-                    SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
-                    DURATION FOR TOKEN 30d, FOR SESSION 30d;
-                 DEFINE TABLE IF NOT EXISTS company SCHEMALESS PERMISSIONS FOR select, update, delete WHERE owner = $auth.id;
-                 DEFINE TABLE IF NOT EXISTS agent SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                 DEFINE TABLE IF NOT EXISTS project SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                 DEFINE TABLE IF NOT EXISTS tool SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                 DEFINE TABLE IF NOT EXISTS issue SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
-            ).await?.check()
-        }).await?;
+        // Only initialize schema if we are logging in as root (no token)
+        if token.is_none() {
+            with_database_timeout("schema initialization", async {
+                db.query(
+                    "DEFINE TABLE IF NOT EXISTS user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
+                     DEFINE ACCESS user ON DATABASE TYPE RECORD
+                        SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
+                        SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
+                        DURATION FOR TOKEN 30d, FOR SESSION 30d;
+                     DEFINE TABLE IF NOT EXISTS company SCHEMALESS PERMISSIONS FOR select, update, delete WHERE owner = $auth.id;
+                     DEFINE TABLE IF NOT EXISTS agent SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                     DEFINE TABLE IF NOT EXISTS project SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                     DEFINE TABLE IF NOT EXISTS tool SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                     DEFINE TABLE IF NOT EXISTS issue SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
+                ).await?.check()
+            }).await?;
+        }
 
         let mut response = with_database_timeout("state hydration", async {
             let mut q = db.query(

@@ -1,61 +1,35 @@
-import re
-with open("infra/variables.tf", "r", encoding="utf-8") as f:
-    c = f.read()
+import urllib.request
+import json
+import ssl
+import time
 
-patch = """variable "telegram_token" {
-  type        = string
-  sensitive   = true
-  description = "Telegram Bot Token"
-}
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
 
-variable "gemini_api_key" {
-  type        = string
-  sensitive   = true
-  description = "Gemini API Key for inference fallback"
-}"""
+base_url = "https://actualised-orchestrator-yy32pk5s3q-nw.a.run.app"
 
-if "gemini_api_key" not in c:
-    c = c.replace("""variable "telegram_token" {
-  type        = string
-  sensitive   = true
-  description = "Telegram Bot Token"
-}""", patch)
+# 1. Signup
+print("Signing up...")
+req1 = urllib.request.Request(f"{base_url}/api/auth/signup", data=json.dumps({"email": "admin@actualised.ai", "password": "password"}).encode("utf-8"), headers={"Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req1, context=ctx) as res:
+        data = json.loads(res.read().decode("utf-8"))
+        token = data["token"]
+        print("Got token:", token)
+except Exception as e:
+    print("Signup failed (maybe already exists). Trying signin...")
+    req_signin = urllib.request.Request(f"{base_url}/api/auth/signin", data=json.dumps({"email": "admin@actualised.ai", "password": "password"}).encode("utf-8"), headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req_signin, context=ctx) as res:
+            data = json.loads(res.read().decode("utf-8"))
+            token = data["token"]
+            print("Got token from signin:", token)
+    except Exception as e:
+        print("Signin failed too:", e)
+        if hasattr(e, 'read'): print(e.read())
+        exit(1)
 
-with open("infra/variables.tf", "w", encoding="utf-8") as f:
-    f.write(c)
-
-with open("infra/main.tf", "r", encoding="utf-8") as f:
-    m = f.read()
-
-env_patch = """      env {
-        name  = "TELEGRAM_TOKEN"
-        value = var.telegram_token
-      }
-
-      env {
-        name  = "GEMINI_API_KEY"
-        value = var.gemini_api_key
-      }"""
-
-if "GEMINI_API_KEY" not in m:
-    m = m.replace("""      env {
-        name  = "TELEGRAM_TOKEN"
-        value = var.telegram_token
-      }""", env_patch)
-
-with open("infra/main.tf", "w", encoding="utf-8") as f:
-    f.write(m)
-
-with open(".github/workflows/cloud-run-deploy.yml", "r", encoding="utf-8") as f:
-    w = f.read()
-
-wf_patch = """          TF_VAR_surrealdb_pass: ${{ secrets.SURREALDB_PASS }}
-          TF_VAR_telegram_token: ${{ secrets.TELEGRAM_TOKEN }}
-          TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}"""
-
-if "TF_VAR_gemini_api_key" not in w:
-    w = w.replace("""          TF_VAR_surrealdb_pass: ${{ secrets.SURREALDB_PASS }}
-          TF_VAR_telegram_token: ${{ secrets.TELEGRAM_TOKEN }}""", wf_patch)
-
-with open(".github/workflows/cloud-run-deploy.yml", "w", encoding="utf-8") as f:
-    f.write(w)
+# Note: Since the Cloud Run server is broken for CompanyState::init with normal tokens right now,
+# wait! If the Cloud Run server is currently broken, it will STILL throw the IAM error because I haven't deployed the fix!
+# I can't hit the Cloud Run server to create the company until I deploy!
