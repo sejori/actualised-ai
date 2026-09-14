@@ -141,10 +141,44 @@ app.post('/api/orchestrator/run', async (c) => {
   publishStateChanged();
   return c.json(await snapshot(await requireClient(c)));
 });
-app.post('/api/shared-files', async (c) => {
-  await (await requireClient(c)).addSharedFile(await c.req.json());
-  publishStateChanged();
-  return c.json({ created: true });
+app.post('/api/webhooks/github', async (c) => {
+  // Extract standard GitHub webhook payload
+  const payload = await c.req.json();
+  const event = c.req.header('x-github-event');
+  
+  if (event === 'issues' || event === 'issue_comment') {
+    const issueId = payload.issue.number.toString();
+    const title = payload.issue.title;
+    const body = payload.issue.body || '';
+    const state = payload.issue.state;
+    // For simplicity we just use login name.
+    const assignee = payload.issue.assignee ? payload.issue.assignee.login : null; 
+    
+    // Convert to our internal Issue format
+    const internalIssue = {
+      id: issueId,
+      title,
+      body,
+      state,
+      author: payload.issue.user.login,
+      assignee,
+      labels: payload.issue.labels.map((l: any) => l.name),
+      comments: [] // We could parse comments here if needed, or rely on fetching them
+    };
+    
+    // For simplicity in a multi-tenant setup, this needs a valid auth context or a dedicated webhook token mapped to a company.
+    // Assuming requireClient will authenticate via query param `?token=` for webhook
+    const client = await requireClient(c);
+    await client.syncIssue(JSON.stringify(internalIssue));
+    
+    // Auto-trigger the inference loop so the assigned agent responds
+    await client.start();
+    
+    publishStateChanged();
+    return c.json({ processed: true });
+  }
+  
+  return c.json({ ignored: true });
 });
 app.delete('/api/tools/:name', async (c) => {
   await (await requireClient(c)).removeTool(c.req.param('name'));
