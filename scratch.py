@@ -1,33 +1,61 @@
 import re
-with open("packages/sdk/examples/server.ts", "r", encoding="utf-8") as f:
+with open("infra/variables.tf", "r", encoding="utf-8") as f:
     c = f.read()
 
-patch = """const requireClient = async (c: any) => {
-  const token = getCookie(c, 'session_token') || c.req.query('token');
-  if (!token) throw new Error('Unauthorized');
-  
-  let companyId = c.req.header('X-Company-ID');
-  
-  // For webhooks, if no explicit company header is provided, fallback to the query parameter or the user's first available company.
-  if (!companyId) {
-    companyId = c.req.query('companyId');
-    if (!companyId) {
-      const companies = await ActualisedClient.getCompanies(process.env.SURREALDB_URL || 'mem://', token);
-      if (companies && companies.length > 0) {
-        companyId = (companies[0] as any).id;
-      }
-    }
-  }
-  
-  const cacheKey = `${token}:${companyId || 'default'}`;
-  if (clientMap.has(cacheKey)) return clientMap.get(cacheKey)!;
-  
-  const client = await ActualisedClient.createWithToken(process.env.SURREALDB_URL || 'mem://', token, companyId);
-  clientMap.set(cacheKey, client);
-  return client;
-};"""
+patch = """variable "telegram_token" {
+  type        = string
+  sensitive   = true
+  description = "Telegram Bot Token"
+}
 
-c = re.sub(r"const requireClient = async \(c: any\) => \{\n  const token = getCookie\(c, 'session_token'\) \|\| c\.req\.query\('token'\);\n  if \(!token\) throw new Error\('Unauthorized'\);\n  \n  const companyId = c\.req\.header\('X-Company-ID'\);\n  const cacheKey = `\$\{token\}:\$\{companyId \|\| 'default'\}\`;\n  if \(clientMap\.has\(cacheKey\)\) return clientMap\.get\(cacheKey\)!\;\n  \n  const client = await ActualisedClient\.createWithToken\(process\.env\.SURREALDB_URL \|\| 'mem://', token, companyId\);\n  clientMap\.set\(cacheKey, client\);\n  return client;\n\};", patch, c, flags=re.DOTALL)
+variable "gemini_api_key" {
+  type        = string
+  sensitive   = true
+  description = "Gemini API Key for inference fallback"
+}"""
 
-with open("packages/sdk/examples/server.ts", "w", encoding="utf-8") as f:
+if "gemini_api_key" not in c:
+    c = c.replace("""variable "telegram_token" {
+  type        = string
+  sensitive   = true
+  description = "Telegram Bot Token"
+}""", patch)
+
+with open("infra/variables.tf", "w", encoding="utf-8") as f:
     f.write(c)
+
+with open("infra/main.tf", "r", encoding="utf-8") as f:
+    m = f.read()
+
+env_patch = """      env {
+        name  = "TELEGRAM_TOKEN"
+        value = var.telegram_token
+      }
+
+      env {
+        name  = "GEMINI_API_KEY"
+        value = var.gemini_api_key
+      }"""
+
+if "GEMINI_API_KEY" not in m:
+    m = m.replace("""      env {
+        name  = "TELEGRAM_TOKEN"
+        value = var.telegram_token
+      }""", env_patch)
+
+with open("infra/main.tf", "w", encoding="utf-8") as f:
+    f.write(m)
+
+with open(".github/workflows/cloud-run-deploy.yml", "r", encoding="utf-8") as f:
+    w = f.read()
+
+wf_patch = """          TF_VAR_surrealdb_pass: ${{ secrets.SURREALDB_PASS }}
+          TF_VAR_telegram_token: ${{ secrets.TELEGRAM_TOKEN }}
+          TF_VAR_gemini_api_key: ${{ secrets.GEMINI_API_KEY }}"""
+
+if "TF_VAR_gemini_api_key" not in w:
+    w = w.replace("""          TF_VAR_surrealdb_pass: ${{ secrets.SURREALDB_PASS }}
+          TF_VAR_telegram_token: ${{ secrets.TELEGRAM_TOKEN }}""", wf_patch)
+
+with open(".github/workflows/cloud-run-deploy.yml", "w", encoding="utf-8") as f:
+    f.write(w)
