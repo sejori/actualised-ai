@@ -13,7 +13,7 @@ const encoder = new TextEncoder();
 const clientMap = new Map<string, ActualisedClient>();
 
 const requireClient = async (c: any) => {
-  const token = getCookie(c, 'session_token');
+  const token = getCookie(c, 'session_token') || c.req.query('token');
   if (!token) throw new Error('Unauthorized');
   
   const companyId = c.req.header('X-Company-ID');
@@ -76,7 +76,7 @@ app.post('/api/auth/logout', async (c) => {
 
 
 app.get('/api/companies', async (c) => {
-  const token = getCookie(c, 'session_token');
+  const token = getCookie(c, 'session_token') || c.req.query('token');
   if (!token) return c.json({ error: 'Unauthorized' }, 401);
   return c.json(await ActualisedClient.getCompanies(process.env.SURREALDB_URL || 'mem://', token));
 });
@@ -86,7 +86,7 @@ app.delete('/api/companies/:id', async (c) => {
   const client = await requireClient(c);
   await client.deleteCompany(id);
   // Optional: clear cache keys for this company
-  const token = getCookie(c, 'session_token');
+  const token = getCookie(c, 'session_token') || c.req.query('token');
   clientMap.delete(`${token}:${id}`);
   return c.json({ deleted: true });
 });
@@ -149,13 +149,20 @@ app.post('/api/webhooks/telegram', async (c) => {
     
     // We queue the telegram message directly to the Project Manager's context
     // and instruct them to handle it.
-    const instruction = `[TELEGRAM MESSAGE FROM USER]: ${text}`;
-    await client.queueMessage('node_project_manager', instruction);
+    const instruction = `[TELEGRAM MESSAGE FROM USER]: ${text}
+
+NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
     
-    // Wake up the orchestrator
-    await client.start();
-    
-    publishStateChanged();
+    // Process asynchronously so we can return 200 OK immediately and prevent Telegram webhook timeouts/retries
+    setTimeout(async () => {
+      try {
+        await client.queueMessage('node_project_manager', instruction); // Blocks here if inference is active
+        await client.start(); // Triggers response, blocking subsequent tasks linearly
+        publishStateChanged();
+      } catch (e) {
+        console.error("Telegram background processing error:", e);
+      }
+    }, 0);
   }
   return c.json({ ok: true });
 });
