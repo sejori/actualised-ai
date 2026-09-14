@@ -159,7 +159,7 @@ impl Orchestrator {
                         }
                     }
                     if !issues_context.is_empty() {
-                        prompt_parts.push(format!("You have been triggered to resolve the following issues:\n{}", issues_context));
+                        prompt_parts.push(format!("FOCUS: You are currently working on GitHub issues. Use your tools to investigate, plan, and resolve them.\n\nYou have been triggered to resolve the following issues:\n{}", issues_context));
                     }
                 }
             }
@@ -190,10 +190,13 @@ impl Orchestrator {
             }
 
             let mut final_system_prompt = agent.system_prompt.clone();
-            if let Some(triggers) = &agent.issue_triggers {
-                if !triggers.is_empty() {
-                    final_system_prompt = format!("{}\n\nFOCUS: You are currently working on GitHub issues. Use your tools to investigate, plan, and resolve them.", agent.system_prompt);
-                }
+            
+            // INJECT MEMORY INDEX for long-term retention & caching efficiency
+            if let Ok(index_content) = self.memory.read_memory(&agent.id, "index.md") {
+                final_system_prompt = format!("{}
+
+=== Core Memory (index.md) ===
+{}", final_system_prompt, index_content);
             }
             
             requests.push(InferenceRequest {
@@ -261,6 +264,31 @@ impl Orchestrator {
                                         println!("Failed to write memory: {}", e);
                                     } else {
                                         println!("Successfully wrote memory file: {}", file_name);
+                                    }
+                                } else if call.name == "read_memory" {
+                                    let file_name = call.args["file_name"].as_str().unwrap_or("index.md");
+                                    let msg = match self.memory.read_memory(&agent_id, file_name) {
+                                        Ok(content) => format!("Memory file {} content:\n{}", file_name, content),
+                                        Err(e) => format!("Failed to read memory file: {}", e)
+                                    };
+                                    let _ = self.queue_message(&agent_id, msg).await;
+                                } else if call.name == "telegram_notify" {
+                                    let message = call.args["message"].as_str().unwrap_or_default();
+                                    
+                                    #[cfg(not(target_arch = "wasm32"))]
+                                    {
+                                        let telegram_token = std::env::var("TELEGRAM_BOT_TOKEN").ok();
+                                        let chat_id = std::env::var("TELEGRAM_CHAT_ID").ok();
+                                        let dispatcher = crate::tools::notifications::NotificationDispatcher::new(telegram_token, chat_id);
+                                        let msg = match dispatcher.send_notification(message).await {
+                                            Ok(_) => "Successfully sent telegram notification.".to_string(),
+                                            Err(e) => format!("Failed to send telegram notification: {}", e)
+                                        };
+                                        let _ = self.queue_message(&agent_id, msg).await;
+                                    }
+                                    #[cfg(target_arch = "wasm32")]
+                                    {
+                                        let _ = self.queue_message(&agent_id, "Telegram notifications are not supported in WASM sandbox.".to_string()).await;
                                     }
                                 } else if call.name.starts_with("github_") {
                                     #[cfg(not(target_arch = "wasm32"))]

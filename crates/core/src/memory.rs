@@ -99,6 +99,16 @@ impl MemoryManager {
         Ok(())
     }
 
+    pub fn read_memory(&self, agent_id: &str, file_name: &str) -> Result<String, String> {
+        let memories = self.memories.lock().unwrap();
+        if let Some(agent_memories) = memories.get(agent_id) {
+            if let Some(content) = agent_memories.get(file_name) {
+                return Ok(content.clone());
+            }
+        }
+        Err(format!("Memory file {} not found", file_name))
+    }
+
     pub fn write_memory(&self, agent_id: &str, file_name: &str, content: &str) -> std::io::Result<()> {
         #[cfg(not(target_arch = "wasm32"))]
         {

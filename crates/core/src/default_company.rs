@@ -21,6 +21,30 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             }),
         },
         Tool {
+            name: "read_memory".to_string(),
+            company_id: None,
+            description: "Read content from your own memory footprint. Use this to remember rules, past decisions, or user preferences.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_name": { "type": "string" }
+                },
+                "required": ["file_name"]
+            }),
+        },
+        Tool {
+            name: "telegram_notify".to_string(),
+            company_id: None,
+            description: "Send a notification directly to the user's Telegram. Use sparingly for significant updates or when explicit user input is required.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "message": { "type": "string" }
+                },
+                "required": ["message"]
+            }),
+        },
+        Tool {
             name: "write_memory".to_string(),
             company_id: None,
             description: "Write content to your own memory footprint. Use '/' in file_name to organise files into folders (e.g. 'research/competitors.md').".to_string(),
@@ -85,7 +109,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             role: "Company Orchestrator".to_string(),
             parent_id: None,
             system_prompt: "You are the Project Manager at Pawsome. Coordinate the Engineering, Product, and Growth leads, turn operator messages into clear priorities, and keep the three teams aligned around the MVP. Use create_sub_project to break down cross-team work and write_shared_file to publish company-wide decisions.".to_string(),
-            tools: vec!["create_sub_project".to_string(), "assign_task".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
+            tools: vec!["telegram_notify".to_string(), "create_sub_project".to_string(), "assign_task".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None, issue_triggers: None, company_id: None,
@@ -107,7 +131,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             role: "React/UI Developer".to_string(),
             parent_id: Some("node_eng_lead".to_string()),
             system_prompt: "You are the Frontend Engineer at Pawsome. Build the storefront: product listing pages, pet profile cards, and the checkout flow. Keep your own working notes and drafts organised in folders with write_memory (e.g. 'components/product-card.tsx', 'components/checkout-form.tsx'). When a component is ready to hand off, also publish it to the shared team directory with write_shared_file under 'engineering/frontend/'.".to_string(),
-            tools: vec!["write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
+            tools: vec!["read_memory".to_string(), "write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None, issue_triggers: None, company_id: None,
@@ -118,7 +142,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             role: "Rust API Developer".to_string(),
             parent_id: Some("node_eng_lead".to_string()),
             system_prompt: "You are the Backend Engineer at Pawsome. Build the Rust APIs for the product catalog, inventory, orders, and pet adoption applications. Organise your work with write_memory using folders (e.g. 'api/catalog.rs', 'api/orders.rs'). Publish finished API contracts to the shared team directory with write_shared_file under 'engineering/backend/' so the Frontend Engineer can integrate against them.".to_string(),
-            tools: vec!["write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
+            tools: vec!["read_memory".to_string(), "write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None, issue_triggers: None, company_id: None,
@@ -140,7 +164,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             role: "UI/UX Designer".to_string(),
             parent_id: Some("node_product_lead".to_string()),
             system_prompt: "You are the Designer at Pawsome. Create wireframes and style guides for the storefront and adoption flow. Keep drafts organised with write_memory (e.g. 'wireframes/homepage.md', 'style/palette.css'). Publish finalised wireframes to the shared team directory with write_shared_file under 'product/wireframes/' for engineering to build from.".to_string(),
-            tools: vec!["write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
+            tools: vec!["read_memory".to_string(), "write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None, issue_triggers: None, company_id: None,
@@ -162,7 +186,7 @@ pub async fn seed_default_company(state: &mut CompanyState) -> Result<(), String
             role: "Marketing Execution".to_string(),
             parent_id: Some("node_growth_lead".to_string()),
             system_prompt: "You are the Marketing Exec at Pawsome. Write launch campaign copy: emails, social posts, and adoption-drive promotions. Keep drafts organised with write_memory (e.g. 'campaigns/launch-email.txt', 'campaigns/social-posts.md'). Publish approved copy to the shared team directory with write_shared_file under 'growth/campaigns/'.".to_string(),
-            tools: vec!["write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
+            tools: vec!["read_memory".to_string(), "write_memory".to_string(), "github_read_file".to_string(), "github_write_file".to_string(), "github_comment_issue".to_string()],
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None, issue_triggers: None, company_id: None,
