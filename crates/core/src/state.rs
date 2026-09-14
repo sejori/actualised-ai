@@ -164,11 +164,11 @@ impl CompanyState {
                         SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
                         SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
-                     DEFINE TABLE IF NOT EXISTS company SCHEMALESS PERMISSIONS FOR select, update, delete WHERE owner = $auth.id;
-                     DEFINE TABLE IF NOT EXISTS agent SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                     DEFINE TABLE IF NOT EXISTS project SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                     DEFINE TABLE IF NOT EXISTS tool SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                     DEFINE TABLE IF NOT EXISTS issue SCHEMALESS PERMISSIONS FOR select, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
+                     DEFINE TABLE IF NOT EXISTS company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
+                     DEFINE TABLE IF NOT EXISTS agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                     DEFINE TABLE IF NOT EXISTS project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                     DEFINE TABLE IF NOT EXISTS tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
+                     DEFINE TABLE IF NOT EXISTS issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
                 ).await?.check()
             }).await?;
         }
@@ -239,12 +239,30 @@ impl CompanyState {
     pub async fn set_company_name(&mut self, name: String) -> Result<(), String> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let res = self.db
-                .query("IF (SELECT VALUE id FROM company LIMIT 1)[0] THEN UPDATE company SET name = $name ELSE CREATE company SET name = $name, owner = $auth.id END;")
+            let mut res = self.db
+                .query("LET $c = IF (SELECT VALUE id FROM company LIMIT 1)[0] THEN (UPDATE company SET name = $name RETURN id) ELSE (CREATE company SET name = $name, owner = $auth.id RETURN id) END;
+                        UPDATE agent SET company_id = $c[0].id WHERE company_id = null;
+                        UPDATE project SET company_id = $c[0].id WHERE company_id = null;
+                        UPDATE tool SET company_id = $c[0].id WHERE company_id = null;
+                        UPDATE issue SET company_id = $c[0].id WHERE company_id = null;
+                        RETURN type::string($c[0].id);")
                 .bind(("name", name.clone()))
-                .await.map_err(|e| e.to_string())?
-                .check().map_err(|e| e.to_string())?;
-            // We should reload company_id if we created it, but the app can just reload
+                .await.map_err(|e| e.to_string())?;
+
+            let id_val: Option<String> = res.take(5).map_err(|e| e.to_string())?;
+            if let Some(id_str) = id_val {
+                self.company_id = Some(id_str);
+            }
+            
+            for a in self.agents.iter_mut() {
+                a.company_id = self.company_id.clone();
+            }
+            for p in self.projects.iter_mut() {
+                p.company_id = self.company_id.clone();
+            }
+            for t in self.tools.iter_mut() {
+                t.company_id = self.company_id.clone();
+            }
         }
 
         self.company_name = Some(name);
