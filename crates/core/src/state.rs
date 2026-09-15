@@ -183,7 +183,7 @@ impl CompanyState {
                     format!("company:{}", target)
                 };
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_record(parent_id) THEN record::id(parent_id) ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
+                    "SELECT record::id(id) AS id, name, role, IF type::is_record(parent_id) THEN record::id(parent_id) ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
@@ -191,7 +191,7 @@ impl CompanyState {
                 ).bind(("target", full_target)).await
             } else {
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_record(parent_id) THEN record::id(parent_id) ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks, pending_messages, issue_triggers FROM agent;
+                    "SELECT record::id(id) AS id, name, role, IF type::is_record(parent_id) THEN record::id(parent_id) ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;

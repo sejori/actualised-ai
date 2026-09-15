@@ -29,3 +29,26 @@ When mapping new secrets to the Cloud Run container:
 
 ## 6. CSS Cascading & Media Queries
 When adding dark mode support in CSS (like `App.css`), place the `@media (prefers-color-scheme: dark)` block at the **bottom** of the file (or after the base class styles it modifies). If the base class is declared *after* the media query, CSS's top-to-bottom cascading rules will cause the base styles to incorrectly override the dark mode styles.
+
+## 7. SurrealDB Null vs NONE for Option<Vec<...>> fields
+SurrealDB v2 returns SQL `null` for unset array-type fields (e.g. `scheduled_tasks`, `pending_messages`, `issue_triggers`), not `NONE`. Rust's `Option<Vec<T>>` will **fail to deserialize** with: `Expected array<...>, got null`.
+
+**Fix:** Coalesce null to NONE explicitly in the SELECT query using the `??` operator:
+```
+scheduled_tasks ?? NONE AS scheduled_tasks,
+pending_messages ?? NONE AS pending_messages,
+issue_triggers ?? NONE AS issue_triggers
+```
+This pattern must be applied to **every** `Option<Vec<...>>` field in all SELECT queries that hydrate state. Plain `Option<T>` fields for scalar types (strings, numbers) typically deserialize from null fine; it is specifically `Option<Vec<...>>` and `Option<Object>` types that fail.
+
+## 8. Agent ID Prefix Convention
+Agent IDs are stored in SurrealDB as `agent:<bare_id>` (e.g. `agent:abc123`). However, after hydration through `record::id(id)`, the prefix is **stripped** — agents in Rust memory hold bare IDs like `"abc123"`.
+
+When comparing IDs in Rust (e.g. in `update_agent`, `remove_agent`, `queue_message`), you **must strip** the `"agent:"` prefix from both sides before comparing:
+```rust
+a.id.replace("agent:", "") == target_id.replace("agent:", "")
+```
+When **assigning** a `parent_id` field (which is written back to the DB and compared in tests), re-add the prefix:
+```rust
+a.parent_id = Some(format!("agent:{}", target_id));
+```
