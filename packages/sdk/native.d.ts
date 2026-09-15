@@ -4,6 +4,10 @@ export class Company {
   static signup(dbPath: string, email: string, pass: string): Promise<string>;
   static signin(dbPath: string, email: string, pass: string): Promise<string>;
   static getCompanies(dbPath: string, token: string): Promise<string>;
+  static initSystemClient(stateDirectory: string, dbPath: string, companyId: string): Promise<Company>;
+  
+  updateCompanySettings(settingsJson: string): Promise<void>;
+  getCompanySettings(): Promise<string | null>;
   
   deleteCompany(id: string): Promise<void>;
   setPacing(requestsPerMinute: number, workingHoursStart?: string, workingHoursEnd?: string): Promise<void>;
