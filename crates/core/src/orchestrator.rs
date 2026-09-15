@@ -102,7 +102,7 @@ impl Orchestrator {
 
     /// Queues an operator message to be appended to an agent's prompt on its next turn.
     pub async fn queue_message(&mut self, agent_id: &str, message: String) -> Result<(), String> {
-        let target_id = if agent_id.contains(':') { agent_id.to_string() } else { format!("agent:{}", agent_id) };
+        let target_id = agent_id.replace("agent:", "");
         if let Some(agent) = self.state.agents.iter().find(|a| a.id == target_id).cloned() {
             let mut updated_agent = agent.clone();
             let mut pending = updated_agent.pending_messages.unwrap_or_default();

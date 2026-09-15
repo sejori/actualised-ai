@@ -345,28 +345,28 @@ impl CompanyState {
     }
 
     pub async fn update_agent(&mut self, id: &str, mut new_agent: Agent) -> Result<(), String> {
-        let target_id = if id.contains(':') { id.to_string() } else { format!("agent:{}", id) };
+        let target_id = id.replace("agent:", "");
         let mut updates_needed = Vec::new();
-        let was_root = self.agents.iter().find(|a| a.id == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);
+        let was_root = self.agents.iter().find(|a| a.id.replace("agent:", "") == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);
 
         if new_agent.parent_id.is_none() {
             for a in self.agents.iter_mut() {
-                if a.id != target_id && a.parent_id.is_none() {
-                    a.parent_id = Some(target_id.clone());
+                if a.id.replace("agent:", "") != target_id && a.parent_id.is_none() {
+                    a.parent_id = Some(format!("agent:{}", target_id));
                     updates_needed.push(a.clone());
                 }
             }
         } else if was_root {
             let manager_id = new_agent.parent_id.as_ref().unwrap().clone();
             for a in self.agents.iter_mut() {
-                if a.id == manager_id {
+                if a.id.replace("agent:", "") == manager_id.replace("agent:", "") {
                     a.parent_id = None;
                     updates_needed.push(a.clone());
                 }
             }
         }
 
-        if let Some(idx) = self.agents.iter().position(|a| a.id == target_id) {
+        if let Some(idx) = self.agents.iter().position(|a| a.id.replace("agent:", "") == target_id) {
             self.agents[idx] = new_agent.clone();
             updates_needed.push(new_agent);
         }
@@ -386,19 +386,19 @@ impl CompanyState {
     }
 
     pub async fn remove_agent(&mut self, id: &str) -> Result<(), String> {
-        let target_id = if id.contains(':') { id.to_string() } else { format!("agent:{}", id) };
-        let is_root = self.agents.iter().find(|a| a.id == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);
-        let parent_id = self.agents.iter().find(|a| a.id == target_id).and_then(|a| a.parent_id.clone());
+        let target_id = id.replace("agent:", "");
+        let is_root = self.agents.iter().find(|a| a.id.replace("agent:", "") == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);
+        let parent_id = self.agents.iter().find(|a| a.id.replace("agent:", "") == target_id).and_then(|a| a.parent_id.clone());
         let mut updates_needed = Vec::new();
 
         if is_root {
-            let next_root = self.agents.iter().find(|a| a.parent_id.as_deref() == Some(&target_id)).map(|a| a.id.clone());
+            let next_root = self.agents.iter().find(|a| a.parent_id.as_deref().map(|s| s.replace("agent:", "")) == Some(target_id.clone())).map(|a| a.id.clone());
             if let Some(new_root_id) = next_root {
                 for a in self.agents.iter_mut() {
                     if a.id == new_root_id {
                         a.parent_id = None;
                         updates_needed.push(a.clone());
-                    } else if a.parent_id.as_deref() == Some(&target_id) {
+                    } else if a.parent_id.as_deref().map(|s| s.replace("agent:", "")) == Some(target_id.clone()) {
                         a.parent_id = Some(new_root_id.clone());
                         updates_needed.push(a.clone());
                     }
@@ -406,14 +406,14 @@ impl CompanyState {
             }
         } else {
             for a in self.agents.iter_mut() {
-                if a.parent_id.as_deref() == Some(&target_id) {
+                if a.parent_id.as_deref().map(|s| s.replace("agent:", "")) == Some(target_id.clone()) {
                     a.parent_id = parent_id.clone();
                     updates_needed.push(a.clone());
                 }
             }
         }
 
-        self.agents.retain(|a| a.id != target_id);
+        self.agents.retain(|a| a.id.replace("agent:", "") != target_id);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
