@@ -114,15 +114,18 @@ impl Company {
     }
 
     #[napi]
-    pub async fn get_user_and_company_by_telegram_id(db_path: String, chat_id: f64) -> napi::Result<String> {
-        actualised_core::state::get_user_and_company_by_telegram_id(&db_path, chat_id as i64).await
-            .map_err(napi::Error::from_reason)
+    pub async fn update_company_settings(&self, settings_json: String) -> napi::Result<()> {
+        let settings: serde_json::Value = serde_json::from_str(&settings_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        self.orchestrator.lock().await.state.update_company_settings(settings).await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(())
     }
 
     #[napi]
-    pub async fn link_telegram_chat(db_path: String, token: String, chat_id: f64) -> napi::Result<()> {
-        actualised_core::state::link_telegram_chat(&db_path, &token, chat_id as i64).await
-            .map_err(napi::Error::from_reason)
+    pub async fn get_company_settings(&self) -> Option<String> {
+        self.orchestrator.lock().await.state.settings.as_ref()
+            .map(|s| s.to_string())
     }
 
 

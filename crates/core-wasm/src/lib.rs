@@ -156,6 +156,15 @@ impl OrchestratorWasm {
     }
 
     #[wasm_bindgen]
+    pub async fn update_company_settings(&mut self, settings_json: JsValue) -> Result<(), JsValue> {
+        let settings: serde_json::Value = serde_wasm_bindgen::from_value(settings_json)
+            .map_err(|e| JsValue::from_str(&format!("Invalid settings JSON: {}", e)))?;
+        self.inner.state.update_company_settings(settings).await
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(())
+    }
+
+    #[wasm_bindgen]
     pub fn configure_inference(&mut self, config_json: JsValue) -> Result<(), JsValue> {
         let config: InferenceConfig = serde_wasm_bindgen::from_value(config_json)
             .map_err(|e| JsValue::from_str(&format!("Invalid inference config: {}", e)))?;

@@ -95,6 +95,10 @@ export class RemoteOrchestrator {
     return request('/api/config/inference', { method: 'POST', body: JSON.stringify(config) });
   }
 
+  update_company_settings(settings: unknown) {
+    return request('/api/settings', { method: 'PUT', body: JSON.stringify(settings) });
+  }
+
   configure_rate_limits(config: unknown) {
     return request('/api/config/rate-limits', { method: 'POST', body: JSON.stringify(config) });
   }

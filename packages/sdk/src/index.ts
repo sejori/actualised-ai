@@ -63,13 +63,14 @@ export class ActualisedClient {
     return Company.signin(dbPath, email, pass);
   }
 
-  static async getUserAndCompanyByTelegramId(dbPath: string, chatId: number): Promise<{ user_id: string, company_id: string | null } | null> {
-    const result = await Company.getUserAndCompanyByTelegramId(dbPath, chatId);
-    return JSON.parse(result);
+  async updateCompanySettings(settings: any): Promise<void> {
+    await this.company.updateCompanySettings(JSON.stringify(settings));
+    await this.company.configureInference(JSON.stringify(settings));
   }
 
-  static async linkTelegramChat(dbPath: string, token: string, chatId: number): Promise<void> {
-    await Company.linkTelegramChat(dbPath, token, chatId);
+  async getCompanySettings(): Promise<any | null> {
+    const settingsStr = await this.company.getCompanySettings();
+    return settingsStr ? JSON.parse(settingsStr) : null;
   }
 
   static async getCompanies(dbPath: string, token: string): Promise<unknown[]> {

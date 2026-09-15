@@ -13,7 +13,7 @@ type Project = { id: string; title: string; description: string };
 type Tool = { name: string; description: string; parameters: any };
 type SharedFile = { id: string; name: string; content: string };
 type HoverPosition = { x: number; y: number };
-type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string };
+type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string; telegramBotToken?: string };
 type RateLimitSettings = { maxConcurrentRequests: number; requestsPerMinute: number };
 type ConversationTurn = { role: 'operator' | 'agent'; content: string };
 type AgentContext = { pending_messages?: string[]; history?: ConversationTurn[] };
@@ -140,7 +140,10 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
 
   const applyInferenceSettings = async (settings: InferenceSettings) => {
     try {
-      await callOrchestrator((o) => o.configure_inference({ provider: settings.provider, model: settings.model, service_tier: settings.serviceTier || null, api_key: settings.apiKey }));
+      await callOrchestrator(async (o) => {
+        await o.update_company_settings(settings);
+        o.configure_inference({ provider: settings.provider, model: settings.model, service_tier: settings.serviceTier || null, api_key: settings.apiKey });
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Failed to apply inference settings');
     }
@@ -786,6 +789,15 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
               placeholder="Paste your provider API key"
               value={draftSettings().apiKey}
               onInput={(event) => setDraftSettings((prev) => ({ ...prev, apiKey: event.currentTarget.value }))}
+            />
+          </label>
+          <label>Telegram Bot Token (Optional)
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder="123456789:ABCdefGHIjklmNOPQrsTUVwxyZ"
+              value={draftSettings().telegramBotToken || ''}
+              onInput={(event) => setDraftSettings((prev) => ({ ...prev, telegramBotToken: event.currentTarget.value }))}
             />
           </label>
           <fieldset class="rate-limit-fieldset">

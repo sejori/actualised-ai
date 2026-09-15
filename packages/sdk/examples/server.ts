@@ -157,61 +157,80 @@ app.post('/api/orchestrator/run', async (c) => {
   await (await requireClient(c)).start();
   publishStateChanged();
 });
-app.post('/api/telegram/link', async (c) => {
-  const token = getCookie(c, 'session_token') || c.req.query('token');
-  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+app.put('/api/settings', async (c) => {
+  const settings = await c.req.json();
+  const client = await requireClient(c);
   
-  const body = await c.req.json<{ chat_id: number }>();
-  if (!body.chat_id) return c.json({ error: 'chat_id is required' }, 400);
+  // Save settings to database
+  await client.updateCompanySettings(settings);
 
-  try {
-    await ActualisedClient.linkTelegramChat(process.env.SURREALDB_URL || 'mem://', token, body.chat_id);
-    return c.json({ success: true });
-  } catch (e: any) {
-    return c.json({ error: e.message }, 500);
+  // If a Telegram Bot Token is provided, register the webhook automatically
+  if (settings.telegramBotToken) {
+    const companyId = await client.getCompanyName().then(async () => {
+      // Actually we just need the company ID. The client might not expose it directly,
+      // but we can query it via getCompanies. Let's assume ActualisedClient could expose getCompanyId.
+      // Wait, requireClient looks it up from the header or query param or defaults to the first company.
+      const token = getCookie(c, 'session_token') || c.req.query('token');
+      const companies = await ActualisedClient.getCompanies(process.env.SURREALDB_URL || 'mem://', token as string);
+      return (companies[0] as any).id;
+    });
+
+    if (companyId) {
+      // Extract the raw ID part if it contains 'company:'
+      const rawId = companyId.replace('company:', '');
+      const host = process.env.BASE_URL || 'https://actualised-orchestrator-658050940120.europe-west2.run.app';
+      const webhookUrl = `${host}/api/webhooks/telegram/${rawId}`;
+      
+      try {
+        await fetch(`https://api.telegram.org/bot${settings.telegramBotToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+        console.log(`Registered Telegram webhook for company ${rawId} to ${webhookUrl}`);
+      } catch (err) {
+        console.error('Failed to register telegram webhook', err);
+      }
+    }
   }
+
+  return c.json({ success: true });
 });
 
-app.post('/api/webhooks/telegram', async (c) => {
+app.post('/api/webhooks/telegram/:companyId', async (c) => {
+  const companyId = c.req.param('companyId');
+  if (!companyId) return c.json({ ok: true });
+
   const payload = await c.req.json();
   if (payload && payload.message && payload.message.text) {
     const text = payload.message.text;
     const chatId = payload.message.chat?.id;
     if (!chatId) return c.json({ ok: true });
 
-    // Send "typing..." indicator immediately for instant feedback
-    if (process.env.TELEGRAM_TOKEN) {
-      fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendChatAction`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
-      }).catch(() => {});
-    }
-
     try {
-      const userAndCompany = await ActualisedClient.getUserAndCompanyByTelegramId(process.env.SURREALDB_URL || 'mem://', chatId);
-      if (!userAndCompany || !userAndCompany.company_id) {
-        if (process.env.TELEGRAM_TOKEN) {
-          fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              chat_id: chatId, 
-              text: `Please link your Actualised.ai account first.\n\nSend a POST request to \`/api/telegram/link\` with your session token and \`{"chat_id": ${chatId}}\`.`
-            }),
-          }).catch(() => {});
-        }
-        return c.json({ ok: true });
+      // Create a system client bound to this company's scope
+      const client = await ActualisedClient.createSystemClient(process.env.SURREALDB_URL || 'mem://', `company:${companyId}`);
+      
+      const settings = await client.getCompanySettings();
+      const telegramToken = settings?.telegramBotToken;
+      
+      // Automatically capture and save the chat ID so agents can push notifications back to the user later
+      if (settings && !settings.telegramChatId) {
+        settings.telegramChatId = chatId;
+        await client.updateCompanySettings(settings);
       }
 
-      // Create a system client bound to this company's scope
-      const client = await ActualisedClient.createSystemClient(process.env.SURREALDB_URL || 'mem://', userAndCompany.company_id);
+      if (telegramToken) {
+        fetch(`https://api.telegram.org/bot${telegramToken}/sendChatAction`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+        }).catch(() => {});
+      } else {
+        console.warn(`Telegram webhook received for company ${companyId} but no telegramBotToken is configured.`);
+      }
 
-      // Find the root agent dynamically (parent_id = null) so any agent hierarchy works
+      // Find the root agent dynamically
       const agents = await client.getAgents();
       const rootAgent = agents.find((a: any) => !a.parent_id);
       if (!rootAgent) {
-        console.error('Telegram webhook: no root agent found for company', userAndCompany.company_id);
+        console.error('Telegram webhook: no root agent found for company', companyId);
         return c.json({ ok: true });
       }
 
@@ -219,7 +238,7 @@ app.post('/api/webhooks/telegram', async (c) => {
 
 NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
 
-      // Process asynchronously so we can return 200 OK immediately and prevent Telegram webhook timeouts/retries
+      // Process asynchronously
       setTimeout(async () => {
         try {
           await client.queueMessage(rootAgent.id, instruction);
@@ -230,7 +249,7 @@ NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
         }
       }, 0);
     } catch (e) {
-      console.error('Telegram webhook error resolving user:', e);
+      console.error('Telegram webhook error processing message:', e);
     }
   }
   return c.json({ ok: true });

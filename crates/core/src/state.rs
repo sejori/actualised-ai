@@ -122,6 +122,7 @@ pub struct CompanyState {
     pub repository: Option<RepositoryConfig>,
     pub company_name: Option<String>,
     pub company_id: Option<String>,
+    pub settings: Option<serde_json::Value>,
 }
 
 impl CompanyState {
@@ -160,13 +161,12 @@ impl CompanyState {
             with_database_timeout("schema initialization", async {
                 db.query(
                     "DEFINE TABLE OVERWRITE user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
-                     DEFINE FIELD IF NOT EXISTS telegram_chat_id ON user TYPE option<int>;
-                     DEFINE INDEX IF NOT EXISTS user_telegram_chat_id ON user COLUMNS telegram_chat_id UNIQUE;
                      DEFINE ACCESS IF NOT EXISTS user ON DATABASE TYPE RECORD
                         SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
                         SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
                      DEFINE TABLE OVERWRITE company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
+                     DEFINE FIELD IF NOT EXISTS settings ON company TYPE option<object>;
                     DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
                     DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
                     DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
@@ -187,7 +187,7 @@ impl CompanyState {
                      SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
-                     SELECT record::id(id) AS id, name FROM company WHERE id = type::record($target) LIMIT 1"
+                     SELECT record::id(id) AS id, name, settings FROM company WHERE id = type::record($target) LIMIT 1"
                 ).bind(("target", full_target)).await
             } else {
                 db.query(
@@ -195,7 +195,7 @@ impl CompanyState {
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
-                     SELECT record::id(id) AS id, name FROM company LIMIT 1"
+                     SELECT record::id(id) AS id, name, settings FROM company LIMIT 1"
                 ).await
             }
         }).await?;
@@ -206,6 +206,7 @@ impl CompanyState {
         let company_docs = response.take::<Vec<serde_json::Value>>(4).map_err(|e| e.to_string())?;
         let company_id = company_docs.first().and_then(|d| d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
         let company_name = company_docs.first().and_then(|d| d.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()));
+        let settings = company_docs.first().and_then(|d| d.get("settings").cloned());
         
         Ok(Self {
             db,
@@ -216,6 +217,7 @@ impl CompanyState {
             repository: None,
             company_name,
             company_id,
+            settings,
         })
     }
 
@@ -229,6 +231,7 @@ impl CompanyState {
             repository: None,
             company_name: None,
             company_id: None,
+            settings: None,
         })
     }
 
@@ -244,6 +247,21 @@ impl CompanyState {
         }
         self.issues.retain(|i| i.id != issue.id);
         self.issues.push(issue);
+        Ok(())
+    }
+
+    pub async fn update_company_settings(&mut self, settings: serde_json::Value) -> Result<(), String> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(company_id) = &self.company_id {
+                self.db.query("UPDATE type::thing('company', $id) SET settings = $settings")
+                    .bind(("id", company_id.replace("company:", "")))
+                    .bind(("settings", settings.clone()))
+                    .await.map_err(|e| e.to_string())?
+                    .check().map_err(|e| e.to_string())?;
+            }
+        }
+        self.settings = Some(settings);
         Ok(())
     }
 
