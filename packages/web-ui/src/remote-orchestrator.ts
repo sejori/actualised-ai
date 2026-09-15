@@ -25,11 +25,11 @@ export class RemoteOrchestrator {
   }
 
   static async signup(email: string, pass: string) {
-    return request<{ success: boolean }>('/api/auth/signup', { method: 'POST', body: JSON.stringify({ email, pass }) });
+    return request<{ success: boolean }>('/api/auth/signup', { method: 'POST', body: JSON.stringify({ email, password: pass }) });
   }
 
   static async signin(email: string, pass: string) {
-    return request<{ success: boolean }>('/api/auth/signin', { method: 'POST', body: JSON.stringify({ email, pass }) });
+    return request<{ success: boolean }>('/api/auth/signin', { method: 'POST', body: JSON.stringify({ email, password: pass }) });
   }
 
   static async getCompanies() {

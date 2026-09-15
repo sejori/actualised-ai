@@ -16,11 +16,14 @@
   .memory-leaf:hover, .memory-leaf:focus-visible { background: #263834; border-color: #3b5c54; }
   .tool-list span { background: #263834; border-color: #3b5c54; color: #a9ccba; }
   .canvas-error { background: #4a2018; border-color: #8c3b2c; color: #f0a397; }
+  .setup-form input { background: #262420; color: #e8e6e3; border-color: #3d3b37; }
+  .error-banner { background: #4a2018; border-color: #8c3b2c; color: #f0a397; }
 }
 .setup-page, .canvas-page { box-sizing: border-box; min-height: 100svh; background: var(--paper); color: var(--ink); }
 .setup-page { display: grid; place-content: center; gap: 20px; padding: clamp(24px, 7vw, 112px); text-align: left; background-image: radial-gradient(#ddd3c4 1px, transparent 1px); background-size: 18px 18px; }
 .setup-page h1 { max-width: 750px; margin: 0; font-size: clamp(42px, 6vw, 76px); line-height: .98; letter-spacing: -.05em; }.setup-page > p:not(.eyebrow) { max-width: 570px; color: var(--muted); font-size: 19px; }
 .setup-form { display: grid; grid-template-columns: minmax(220px, 360px) auto; gap: 8px 12px; align-items: end; }.setup-form label { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }.setup-form input { min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 8px; background: #fffdf8; color: var(--ink); font: inherit; }.setup-form input:focus { outline: 2px solid var(--primary-dark); outline-offset: 2px; }.setup-form .primary-button { white-space: nowrap; }
+.error-banner { margin-top: 16px; padding: 10px; border: 1px solid var(--secondary-dark); border-radius: 9px; background: #f8d6ce; color: #783c31; text-align: center; font-size: 14px; }
 button { border: 1px solid transparent; border-radius: 999px; padding: 10px 16px; color: var(--ink); font: inherit; font-weight: 700; cursor: pointer; transition: transform .16s ease, background .16s ease; } button:hover { transform: translateY(-1px); }
 .primary-button { width: fit-content; background: var(--primary); border-color: var(--primary-dark); }.primary-button:hover { background: #a6cec6; }.secondary-button { background: var(--secondary); border-color: var(--secondary-dark); font-size: 13px; }
 .canvas-page { padding: 24px; overflow: hidden; background-image: linear-gradient(rgba(194, 180, 159, .19) 1px, transparent 1px), linear-gradient(90deg, rgba(194, 180, 159, .19) 1px, transparent 1px); background-size: 28px 28px; }
