@@ -239,7 +239,7 @@ impl CompanyState {
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.db
-                .query("UPDATE type::thing('issue', $id) MERGE $content")
+                .query("UPDATE type::record('issue', $id) MERGE $content")
                 .bind(("id", issue.id.clone()))
                 .bind(("content", issue.clone()))
                 .await.map_err(|e| e.to_string())?
@@ -254,7 +254,7 @@ impl CompanyState {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(company_id) = &self.company_id {
-                self.db.query("UPDATE type::thing('company', $id) SET settings = $settings")
+                self.db.query("UPDATE type::record('company', $id) SET settings = $settings")
                     .bind(("id", company_id.replace("company:", "")))
                     .bind(("settings", settings.clone()))
                     .await.map_err(|e| e.to_string())?
