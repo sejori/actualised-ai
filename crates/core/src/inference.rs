@@ -84,8 +84,12 @@ impl InferenceEngine for MockInferenceEngine {
 pub struct InferenceConfig {
     pub provider: String,
     pub model: String,
+    #[serde(alias = "serviceTier")]
     pub service_tier: Option<String>,
+    #[serde(alias = "apiKey")]
     pub api_key: String,
+    #[serde(alias = "telegramBotToken")]
+    pub telegram_bot_token: Option<String>,
 }
 
 /// Builds the engine matching a user's chosen provider. Falls back to the mock engine
