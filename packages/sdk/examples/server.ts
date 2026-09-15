@@ -209,6 +209,7 @@ app.post('/api/webhooks/telegram/:companyId', async (c) => {
       
       const settings = await client.getCompanySettings();
       const telegramToken = settings?.telegramBotToken;
+      console.log(`Telegram webhook: company=${companyId} settings=${JSON.stringify(settings)} token=${telegramToken ? 'SET' : 'MISSING'}`);
       
       // Automatically capture and save the chat ID so agents can push notifications back to the user later
       if (settings && !settings.telegramChatId) {
