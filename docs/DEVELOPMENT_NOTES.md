@@ -25,7 +25,7 @@ When mapping new secrets to the Cloud Run container:
 
 ## 5. SurrealDB v2 Deprecations & Edge Cases
 - **Deprecated `type::thing`**: In SurrealDB v2, `type::thing` is deprecated and will cause a `Parse error: Invalid function/constant path` if used in queries (e.g. `UPDATE type::thing('company', $id)`). You MUST use `type::record` instead (e.g., `UPDATE type::record('company', $id)`).
-- **Null `parent_id` Hydration Crash**: Be careful when hydrating state queries. If a field might be `NULL` (e.g., `parent_id` on root agents), using `record::id(parent_id)` will crash the query (`Argument 1 was the wrong type. Expected 'record' but found 'NULL'`). Always wrap it in a conditional: `IF parent_id != null THEN record::id(parent_id) ELSE null END`.
+- **Null / NONE Hydration Crash**: Be careful when hydrating state queries. If a field might be missing (e.g., `parent_id` on root agents), SurrealDB v2 returns `NONE` instead of `NULL`. Using `record::id(parent_id)` will crash the query (`Argument 1 was the wrong type. Expected 'record' but found 'NONE'`). Always wrap it in a strict type check conditional: `IF type::is::record(parent_id) THEN record::id(parent_id) ELSE null END`.
 
 ## 6. CSS Cascading & Media Queries
 When adding dark mode support in CSS (like `App.css`), place the `@media (prefers-color-scheme: dark)` block at the **bottom** of the file (or after the base class styles it modifies). If the base class is declared *after* the media query, CSS's top-to-bottom cascading rules will cause the base styles to incorrectly override the dark mode styles.
