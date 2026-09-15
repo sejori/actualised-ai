@@ -156,17 +156,31 @@ app.post('/api/config/rate-limits', async (c) => {
 app.post('/api/orchestrator/run', async (c) => {
   await (await requireClient(c)).start();
   publishStateChanged();
-  return c.json(await snapshot(await requireClient(c)));
 });
+app.post('/api/telegram/link', async (c) => {
+  const token = getCookie(c, 'session_token') || c.req.query('token');
+  if (!token) return c.json({ error: 'Unauthorized' }, 401);
+  
+  const body = await c.req.json<{ chat_id: number }>();
+  if (!body.chat_id) return c.json({ error: 'chat_id is required' }, 400);
+
+  try {
+    await ActualisedClient.linkTelegramChat(process.env.SURREALDB_URL || 'mem://', token, body.chat_id);
+    return c.json({ success: true });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
 app.post('/api/webhooks/telegram', async (c) => {
   const payload = await c.req.json();
   if (payload && payload.message && payload.message.text) {
     const text = payload.message.text;
     const chatId = payload.message.chat?.id;
-    const client = await requireClient(c);
+    if (!chatId) return c.json({ ok: true });
 
     // Send "typing..." indicator immediately for instant feedback
-    if (chatId && process.env.TELEGRAM_TOKEN) {
+    if (process.env.TELEGRAM_TOKEN) {
       fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendChatAction`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -174,28 +188,50 @@ app.post('/api/webhooks/telegram', async (c) => {
       }).catch(() => {});
     }
 
-    // Find the root agent dynamically (parent_id = null) so any agent hierarchy works
-    const agents = await client.getAgents();
-    const rootAgent = agents.find((a: any) => !a.parent_id);
-    if (!rootAgent) {
-      console.error('Telegram webhook: no root agent found');
-      return c.json({ ok: true });
-    }
+    try {
+      const userAndCompany = await ActualisedClient.getUserAndCompanyByTelegramId(process.env.SURREALDB_URL || 'mem://', chatId);
+      if (!userAndCompany || !userAndCompany.company_id) {
+        if (process.env.TELEGRAM_TOKEN) {
+          fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              chat_id: chatId, 
+              text: `Please link your Actualised.ai account first.\n\nSend a POST request to \`/api/telegram/link\` with your session token and \`{"chat_id": ${chatId}}\`.`
+            }),
+          }).catch(() => {});
+        }
+        return c.json({ ok: true });
+      }
 
-    const instruction = `[TELEGRAM MESSAGE FROM USER]: ${text}
+      // Create a system client bound to this company's scope
+      const client = await ActualisedClient.createSystemClient(process.env.SURREALDB_URL || 'mem://', userAndCompany.company_id);
+
+      // Find the root agent dynamically (parent_id = null) so any agent hierarchy works
+      const agents = await client.getAgents();
+      const rootAgent = agents.find((a: any) => !a.parent_id);
+      if (!rootAgent) {
+        console.error('Telegram webhook: no root agent found for company', userAndCompany.company_id);
+        return c.json({ ok: true });
+      }
+
+      const instruction = `[TELEGRAM MESSAGE FROM USER]: ${text}
 
 NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
 
-    // Process asynchronously so we can return 200 OK immediately and prevent Telegram webhook timeouts/retries
-    setTimeout(async () => {
-      try {
-        await client.queueMessage(rootAgent.id, instruction);
-        await client.start();
-        publishStateChanged();
-      } catch (e) {
-        console.error('Telegram background processing error:', e);
-      }
-    }, 0);
+      // Process asynchronously so we can return 200 OK immediately and prevent Telegram webhook timeouts/retries
+      setTimeout(async () => {
+        try {
+          await client.queueMessage(rootAgent.id, instruction);
+          await client.start();
+          publishStateChanged();
+        } catch (e) {
+          console.error('Telegram background processing error:', e);
+        }
+      }, 0);
+    } catch (e) {
+      console.error('Telegram webhook error resolving user:', e);
+    }
   }
   return c.json({ ok: true });
 });

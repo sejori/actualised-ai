@@ -40,8 +40,13 @@ export class ActualisedClient {
     this.company = company;
   }
 
-static async create(dbPath: string): Promise<ActualisedClient> {
+  static async create(dbPath: string): Promise<ActualisedClient> {
     const company = await Company.init('Test Co', 'Testing', 'state', dbPath);
+    return new ActualisedClient(company);
+  }
+
+  static async createSystemClient(dbPath: string, companyId: string): Promise<ActualisedClient> {
+    const company = await Company.initSystemClient('state', dbPath, companyId);
     return new ActualisedClient(company);
   }
 
@@ -56,6 +61,15 @@ static async create(dbPath: string): Promise<ActualisedClient> {
 
   static async signin(dbPath: string, email: string, pass: string): Promise<string> {
     return Company.signin(dbPath, email, pass);
+  }
+
+  static async getUserAndCompanyByTelegramId(dbPath: string, chatId: number): Promise<{ user_id: string, company_id: string | null } | null> {
+    const result = await Company.getUserAndCompanyByTelegramId(dbPath, chatId);
+    return JSON.parse(result);
+  }
+
+  static async linkTelegramChat(dbPath: string, token: string, chatId: number): Promise<void> {
+    await Company.linkTelegramChat(dbPath, token, chatId);
   }
 
   static async getCompanies(dbPath: string, token: string): Promise<unknown[]> {

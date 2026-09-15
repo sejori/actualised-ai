@@ -1,0 +1,12 @@
+
+    #[napi]
+    pub async fn get_user_and_company_by_telegram_id(db_path: String, chat_id: f64) -> napi::Result<String> {
+        actualised_core::state::get_user_and_company_by_telegram_id(&db_path, chat_id as i64).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn link_telegram_chat(db_path: String, token: String, chat_id: f64) -> napi::Result<()> {
+        actualised_core::state::link_telegram_chat(&db_path, &token, chat_id as i64).await
+            .map_err(napi::Error::from_reason)
+    }

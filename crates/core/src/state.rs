@@ -160,6 +160,8 @@ impl CompanyState {
             with_database_timeout("schema initialization", async {
                 db.query(
                     "DEFINE TABLE OVERWRITE user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
+                     DEFINE FIELD IF NOT EXISTS telegram_chat_id ON user TYPE option<int>;
+                     DEFINE INDEX IF NOT EXISTS user_telegram_chat_id ON user COLUMNS telegram_chat_id UNIQUE;
                      DEFINE ACCESS IF NOT EXISTS user ON DATABASE TYPE RECORD
                         SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
                         SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
@@ -638,4 +640,55 @@ pub async fn get_companies(db_path: &str, token: &str) -> Result<String, String>
     let mut response = db.query("SELECT record::id(id) AS id, name FROM company").await.map_err(|e| e.to_string())?;
     let companies: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
     serde_json::to_string(&companies).map_err(|e| e.to_string())
+}
+
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn get_user_and_company_by_telegram_id(db_path: &str, chat_id: i64) -> Result<String, String> {
+    let url = if db_path.contains("://") { db_path.to_string() } else { format!("surrealkv://{}", db_path) };
+    let db = connect(&url).await.map_err(|e| e.to_string())?;
+    
+    if let (Ok(user), Ok(pass)) = (std::env::var("SURREALDB_USER"), std::env::var("SURREALDB_PASS")) {
+        db.signin(Root {
+            username: user,
+            password: pass,
+        }).await.map_err(|e| e.to_string())?;
+    } else {
+        return Err("No root credentials found".to_string());
+    }
+    
+    db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
+    
+    let mut response = db.query(
+        "LET $u = (SELECT id FROM user WHERE telegram_chat_id = $chat_id LIMIT 1);
+         IF array::len($u) > 0 {
+             LET $uid = $u[0].id;
+             LET $c = (SELECT record::id(id) AS id FROM company WHERE owner = $uid LIMIT 1);
+             IF array::len($c) > 0 {
+                 RETURN { user_id: record::id($uid), company_id: $c[0].id };
+             } ELSE {
+                 RETURN { user_id: record::id($uid), company_id: null };
+             }
+         } ELSE {
+             RETURN null;
+         }"
+    ).bind(("chat_id", chat_id)).await.map_err(|e| e.to_string())?;
+    
+    let result: Option<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
+    serde_json::to_string(&result).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn link_telegram_chat(db_path: &str, token: &str, chat_id: i64) -> Result<(), String> {
+    let url = if db_path.contains("://") { db_path.to_string() } else { format!("surrealkv://{}", db_path) };
+    let db = connect(&url).await.map_err(|e| e.to_string())?;
+    db.authenticate(token).await.map_err(|e| e.to_string())?;
+    db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
+    
+    db.query("UPDATE user SET telegram_chat_id = $chat_id WHERE id = $auth.id")
+      .bind(("chat_id", chat_id))
+      .await.map_err(|e| e.to_string())?
+      .check().map_err(|e| e.to_string())?;
+      
+    Ok(())
 }

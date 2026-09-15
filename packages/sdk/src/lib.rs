@@ -58,6 +58,23 @@ impl Company {
     }
 
     #[napi]
+    pub async fn init_system_client(state_directory: String, db_path: String, company_id: String) -> napi::Result<Self> {
+        let mut state = CompanyState::init(&db_path, None, Some(company_id)).await
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let memory = MemoryManager::new(&state_directory)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        for agent in &state.agents {
+            memory.setup_agent_dir(&agent.id)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        }
+
+        Ok(Self {
+            orchestrator: Arc::new(Mutex::new(Orchestrator::new(state, memory))),
+            tool_executor: None,
+        })
+    }
+
+    #[napi]
     pub async fn init_with_token(name: String, mission: String, state_directory: String, db_path: String, token: String, target_company: Option<String>) -> napi::Result<Self> {
         println!("Initializing Authenticated Company: {} - Mission: {}", name, mission);
         let mut state = CompanyState::init(&db_path, Some(token), target_company).await
@@ -93,6 +110,18 @@ impl Company {
     #[napi]
     pub async fn signin(db_path: String, email: String, pass: String) -> napi::Result<String> {
         actualised_core::auth::signin(&db_path, &email, &pass).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn get_user_and_company_by_telegram_id(db_path: String, chat_id: f64) -> napi::Result<String> {
+        actualised_core::state::get_user_and_company_by_telegram_id(&db_path, chat_id as i64).await
+            .map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
+    pub async fn link_telegram_chat(db_path: String, token: String, chat_id: f64) -> napi::Result<()> {
+        actualised_core::state::link_telegram_chat(&db_path, &token, chat_id as i64).await
             .map_err(napi::Error::from_reason)
     }
 
