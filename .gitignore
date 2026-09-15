@@ -32,3 +32,5 @@ Thumbs.db
 *.tfstate.*
 *.tfvars
 *.tfvars.json
+scratch.py
+bootstrap.py
