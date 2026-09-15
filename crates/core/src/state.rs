@@ -160,7 +160,7 @@ impl CompanyState {
             with_database_timeout("schema initialization", async {
                 db.query(
                     "DEFINE TABLE OVERWRITE user SCHEMALESS PERMISSIONS FOR select, update, delete WHERE id = $auth.id;
-                     DEFINE ACCESS OVERWRITE user ON DATABASE TYPE RECORD
+                     DEFINE ACCESS IF NOT EXISTS user ON DATABASE TYPE RECORD
                         SIGNUP ( CREATE user SET email = $email, pass = crypto::argon2::generate($pass) )
                         SIGNIN ( SELECT * FROM user WHERE email = $email AND crypto::argon2::compare(pass, $pass) )
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
