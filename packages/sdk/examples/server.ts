@@ -114,13 +114,35 @@ export const processTelegramMessage = async (
   sendMessage = sendTelegramMessage,
 ) => {
   await client.queueMessage(rootAgentId, `[TELEGRAM MESSAGE FROM USER]: ${text}\n\nNOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`);
-  await client.start();
+  
+  let loopRunning = true;
+  let maxTurns = 15;
+  let currentTurn = 0;
 
-  const context = await client.getAgentContext(rootAgentId) as { history?: Array<{ role: string; content: string }> };
-  const latestAgentReply = [...(context.history ?? [])].reverse().find(turn => turn.role === 'agent')?.content;
-  const usedTelegramTool = latestAgentReply?.startsWith('Called tools:') && latestAgentReply.includes('telegram_notify');
-  if (latestAgentReply && !usedTelegramTool) {
-    await sendMessage(telegramToken, chatId, latestAgentReply);
+  while (loopRunning && currentTurn < maxTurns) {
+    currentTurn++;
+    await client.start();
+
+    const context = await client.getAgentContext(rootAgentId) as { history?: Array<{ role: string; content: string }> };
+    const latestAgentReply = [...(context.history ?? [])].reverse().find(turn => turn.role === 'agent')?.content;
+    
+    if (!latestAgentReply) {
+      break;
+    }
+
+    const usedTelegramTool = latestAgentReply.startsWith('Called tools:') && latestAgentReply.includes('telegram_notify');
+    
+    if (!usedTelegramTool) {
+      await sendMessage(telegramToken, chatId, latestAgentReply);
+    }
+
+    if (latestAgentReply.startsWith('Called tools:')) {
+      // The agent used tools, so we should run another inference cycle to resolve them.
+      loopRunning = true;
+    } else {
+      // The agent replied with a final message. Loop ends.
+      loopRunning = false;
+    }
   }
 };
 
@@ -316,16 +338,18 @@ app.post('/api/webhooks/telegram/:companyId', async (c) => {
 
       if (!telegramToken) return c.json({ ok: true });
 
-      try {
-        await processTelegramMessage(client, rootAgent.id, text, telegramToken, chatId);
-        await (await getRunner(client)).restore();
-        publishStateChanged();
-      } catch (error) {
-        console.error('Telegram processing error:', error);
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        await sendTelegramMessage(telegramToken, chatId, `System error while processing your message: ${errorMessage}`)
-          .catch(sendError => console.error('Failed to send Telegram error response:', sendError));
-      }
+      (async () => {
+        try {
+          await processTelegramMessage(client, rootAgent.id, text, telegramToken, chatId);
+          await (await getRunner(client)).restore();
+          publishStateChanged();
+        } catch (error) {
+          console.error('Telegram processing error:', error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          await sendTelegramMessage(telegramToken, chatId, `System error while processing your message: ${errorMessage}`)
+            .catch(sendError => console.error('Failed to send Telegram error response:', sendError));
+        }
+      })();
     } catch (e) {
       console.error('Telegram webhook error processing message:', e);
     }
