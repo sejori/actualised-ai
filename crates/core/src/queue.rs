@@ -101,7 +101,17 @@ impl InferenceQueue {
             
             let fut = async move {
                 let _permit = sem_clone.acquire().await.unwrap();
+                println!("Dispatching inference request for Agent {} to provider...", agent_id);
+                let req_start = Instant::now();
+                
                 let res = engine_clone.generate_response(&req.system_prompt, &req.user_prompt, req.tools).await;
+                
+                let elapsed = req_start.elapsed().as_secs_f64();
+                match &res {
+                    Ok(_) => println!("✅ Received inference response for Agent {} (took {:.2}s)", agent_id, elapsed),
+                    Err(e) => println!("❌ Inference failed for Agent {} (took {:.2}s): {}", agent_id, elapsed, e),
+                }
+                
                 let _ = tx.send((agent_id, res));
             };
 
