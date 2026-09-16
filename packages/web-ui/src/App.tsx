@@ -26,7 +26,7 @@ type OrchestratorClient = OrchestratorWasm | RemoteOrchestrator;
 const INFERENCE_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', models: ['gemini-3.6-flash', 'gemini-3.6-pro'], disabled: false },
   { id: 'openai', label: 'OpenAI', models: ['gpt-5', 'gpt-5-mini'], disabled: false },
-  { id: 'anthropic', label: 'Anthropic (coming soon)', models: ['claude-4.5-sonnet'], disabled: true },
+  { id: 'anthropic', label: 'Anthropic', models: ['claude-sonnet-4-5'], disabled: false },
 ] as const;
 const SERVICE_TIERS = ['default', 'flex', 'priority'];
 const SETTINGS_STORAGE_KEY = 'actualised.inference-settings';
@@ -155,15 +155,24 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
       
       setIsFetchingModels(true);
       let url = '';
+      let headers: Record<string, string> = { 'Authorization': `Bearer ${state.key}` };
       if (state.provider === 'gemini') url = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/models';
       else if (state.provider === 'openai') url = 'https://api.openai.com/v1/models';
+      else if (state.provider === 'anthropic') {
+        url = 'https://api.anthropic.com/v1/models';
+        headers = {
+          'x-api-key': state.key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        };
+      }
       else {
         setIsFetchingModels(false);
         setDynamicModels([]);
         return;
       }
 
-      fetch(url, { headers: { 'Authorization': `Bearer ${state.key}` } })
+      fetch(url, { headers })
         .then(r => r.json())
         .then(d => {
           if (d && d.data && Array.isArray(d.data)) {

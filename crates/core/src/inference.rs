@@ -114,6 +114,10 @@ pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gpt-5".to_string() } else { config.model.clone() },
         }),
+        "anthropic" => Box::new(AnthropicInferenceEngine {
+            api_key: resolved_key,
+            model: if config.model.trim().is_empty() { "claude-sonnet-4-5".to_string() } else { config.model.clone() },
+        }),
         _ => Box::new(MockInferenceEngine),
     }
 }
@@ -123,31 +127,43 @@ pub struct GeminiInferenceEngine {
     pub model: String,
 }
 
+fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
+    let mut body = json!({
+        "systemInstruction": { "parts": [{ "text": system_prompt }] },
+        "contents": [{ "parts": [{ "text": user_prompt }] }]
+    });
+
+    if !tools.is_empty() {
+        let allowed_function_names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
+        let function_declarations: Vec<serde_json::Value> = tools.into_iter().map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters
+            })
+        }).collect();
+
+        body["tools"] = json!([{
+            "function_declarations": function_declarations
+        }]);
+        body["toolConfig"] = json!({
+            "functionCallingConfig": {
+                "mode": "AUTO",
+                "allowedFunctionNames": allowed_function_names
+            }
+        });
+    }
+
+    body
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for GeminiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         let client = reqwest::Client::new();
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", self.model, self.api_key);
-        
-        let mut body = json!({
-            "systemInstruction": { "parts": [{ "text": system_prompt }] },
-            "contents": [{ "parts": [{ "text": user_prompt }] }]
-        });
-
-        if !tools.is_empty() {
-            let function_declarations: Vec<serde_json::Value> = tools.into_iter().map(|t| {
-                json!({
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters
-                })
-            }).collect();
-            
-            body["tools"] = json!([{
-                "function_declarations": function_declarations
-            }]);
-        }
+        let body = gemini_request_body(system_prompt, user_prompt, tools);
         
         let res = client.post(&url)
             .json(&body)
@@ -209,36 +225,41 @@ pub struct OpenAiInferenceEngine {
     pub model: String,
 }
 
+fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
+    let mut body = json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system_prompt },
+            { "role": "user", "content": user_prompt }
+        ]
+    });
+
+    if !tools.is_empty() {
+        let tools_json: Vec<serde_json::Value> = tools.into_iter().map(|tool| {
+            json!({
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters
+                }
+            })
+        }).collect();
+
+        body["tools"] = json!(tools_json);
+        body["tool_choice"] = json!("auto");
+    }
+
+    body
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for OpenAiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         let client = reqwest::Client::new();
         let url = "https://api.openai.com/v1/chat/completions";
-        
-        let mut body = json!({
-            "model": self.model,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user", "content": user_prompt }
-            ]
-        });
-
-        if !tools.is_empty() {
-            let tools_json: Vec<serde_json::Value> = tools.into_iter().map(|t| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }
-                })
-            }).collect();
-            
-            body["tools"] = json!(tools_json);
-            body["tool_choice"] = json!("auto");
-        }
+        let body = openai_request_body(&self.model, system_prompt, user_prompt, tools);
         
         let res = client.post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
@@ -303,6 +324,98 @@ impl InferenceEngine for OpenAiInferenceEngine {
     }
 }
 
+pub struct AnthropicInferenceEngine {
+    pub api_key: String,
+    pub model: String,
+}
+
+fn anthropic_request_body(model: &str, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
+    let mut body = json!({
+        "model": model,
+        "max_tokens": 4096,
+        "system": system_prompt,
+        "messages": [{ "role": "user", "content": user_prompt }]
+    });
+
+    if !tools.is_empty() {
+        let tools_json: Vec<serde_json::Value> = tools.into_iter().map(|tool| {
+            json!({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.parameters
+            })
+        }).collect();
+
+        body["tools"] = json!(tools_json);
+        body["tool_choice"] = json!({ "type": "auto" });
+    }
+
+    body
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl InferenceEngine for AnthropicInferenceEngine {
+    async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
+        let body = anthropic_request_body(&self.model, system_prompt, user_prompt, tools);
+        let mut request = reqwest::Client::new()
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(&body);
+        #[cfg(target_arch = "wasm32")]
+        {
+            request = request.header("anthropic-dangerous-direct-browser-access", "true");
+        }
+        let res = request
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+
+        if !res.status().is_success() {
+            let error_text = res.text().await.unwrap_or_default();
+            return Err(format!("Anthropic API Error: {}", error_text));
+        }
+
+        let response_json: serde_json::Value = res.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        let input_tokens = response_json["usage"]["input_tokens"].as_u64().unwrap_or(0) as usize;
+        let output_tokens = response_json["usage"]["output_tokens"].as_u64().unwrap_or(0) as usize;
+        let stats = InferenceStats {
+            prompt_tokens: input_tokens,
+            completion_tokens: output_tokens,
+            total_tokens: input_tokens + output_tokens,
+        };
+
+        let content = response_json["content"].as_array().ok_or_else(|| "Failed to parse Anthropic response content".to_string())?;
+        let tool_calls: Vec<ToolCall> = content.iter().filter_map(|block| {
+            if block["type"].as_str() != Some("tool_use") {
+                return None;
+            }
+            Some(ToolCall {
+                id: block["id"].as_str().unwrap_or_default().to_string(),
+                name: block["name"].as_str().unwrap_or_default().to_string(),
+                args: block["input"].clone(),
+            })
+        }).collect();
+
+        if !tool_calls.is_empty() {
+            return Ok(InferenceResponse { result: InferenceResult::ToolCalls(tool_calls), stats });
+        }
+
+        let text = content.iter()
+            .filter(|block| block["type"].as_str() == Some("text"))
+            .filter_map(|block| block["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return Ok(InferenceResponse { result: InferenceResult::Text(text), stats });
+        }
+
+        Err("Failed to parse Anthropic response".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,6 +442,38 @@ mod tests {
         };
         let serialized = serde_json::to_string(&call).unwrap();
         assert!(serialized.contains("call_123"));
+    }
+
+    #[test]
+    fn gemini_payload_allows_only_offered_tools() {
+        let body = gemini_request_body("system", "user", vec![Tool {
+            name: "read_memory".to_string(),
+            description: "Read memory".to_string(),
+            parameters: json!({ "type": "object" }),
+            company_id: None,
+        }]);
+
+        assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "AUTO");
+        assert_eq!(body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"], json!(["read_memory"]));
+        assert_eq!(body["tools"][0]["function_declarations"][0]["name"], "read_memory");
+    }
+
+    #[test]
+    fn provider_payloads_use_native_automatic_tool_choice() {
+        let tool = Tool {
+            name: "read_memory".to_string(),
+            description: "Read memory".to_string(),
+            parameters: json!({ "type": "object" }),
+            company_id: None,
+        };
+
+        let openai = openai_request_body("gpt-5", "system", "user", vec![tool.clone()]);
+        assert_eq!(openai["tool_choice"], "auto");
+        assert_eq!(openai["tools"][0]["function"]["name"], "read_memory");
+
+        let anthropic = anthropic_request_body("claude-sonnet-4-5", "system", "user", vec![tool]);
+        assert_eq!(anthropic["tool_choice"], json!({ "type": "auto" }));
+        assert_eq!(anthropic["tools"][0]["name"], "read_memory");
     }
 
     #[tokio::test]

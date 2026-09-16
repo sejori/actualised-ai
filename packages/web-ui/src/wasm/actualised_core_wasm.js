@@ -34,14 +34,6 @@ export class OrchestratorWasm {
         return ret;
     }
     /**
-     * @param {any} file_json
-     * @returns {Promise<void>}
-     */
-    add_shared_file(file_json) {
-        const ret = wasm.orchestratorwasm_add_shared_file(this.__wbg_ptr, file_json);
-        return ret;
-    }
-    /**
      * @param {any} tool_json
      * @returns {Promise<void>}
      */
@@ -196,16 +188,6 @@ export class OrchestratorWasm {
         return ret;
     }
     /**
-     * @param {string} id
-     * @returns {Promise<void>}
-     */
-    remove_shared_file(id) {
-        const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.orchestratorwasm_remove_shared_file(this.__wbg_ptr, ptr0, len0);
-        return ret;
-    }
-    /**
      * @param {string} name
      * @returns {Promise<void>}
      */
@@ -244,6 +226,14 @@ export class OrchestratorWasm {
         const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.orchestratorwasm_update_agent(this.__wbg_ptr, ptr0, len0, agent_json);
+        return ret;
+    }
+    /**
+     * @param {any} settings_json
+     * @returns {Promise<void>}
+     */
+    update_company_settings(settings_json) {
+        const ret = wasm.orchestratorwasm_update_company_settings(this.__wbg_ptr, settings_json);
         return ret;
     }
     /**
@@ -675,12 +665,12 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 332, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 341, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_d05406a4d4dc2481___convert__closures_____invoke___wasm_bindgen_d05406a4d4dc2481___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_d05406a4d4dc2481___JsError___true_);
             return ret;
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 308, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 317, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_d05406a4d4dc2481___convert__closures_____invoke_______true_);
             return ret;
         },
