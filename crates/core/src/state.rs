@@ -167,13 +167,13 @@ impl CompanyState {
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
                      DEFINE TABLE OVERWRITE company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
                      DEFINE FIELD IF NOT EXISTS settings ON company TYPE option<object>;
-                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::thing('company', string::replace(type::string(company_id), 'company:', '')).owner = $auth.id OR company_id = null OR company_id = NONE;
+                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
                     REMOVE FIELD IF EXISTS company_id ON agent;
-                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::thing('company', string::replace(type::string(company_id), 'company:', '')).owner = $auth.id OR company_id = null OR company_id = NONE;
+                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
                     REMOVE FIELD IF EXISTS company_id ON project;
-                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::thing('company', string::replace(type::string(company_id), 'company:', '')).owner = $auth.id OR company_id = null OR company_id = NONE;
+                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
                     REMOVE FIELD IF EXISTS company_id ON tool;
-                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::thing('company', string::replace(type::string(company_id), 'company:', '')).owner = $auth.id OR company_id = null OR company_id = NONE;
+                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
                     REMOVE FIELD IF EXISTS company_id ON issue;"
                 ).await?.check()
             }).await?;
