@@ -127,7 +127,36 @@ pub struct GeminiInferenceEngine {
     pub model: String,
 }
 
-fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
+fn normalize_gemini_schema(mut schema: serde_json::Value) -> Result<serde_json::Value, String> {
+    match &mut schema {
+        serde_json::Value::Object(fields) => {
+            if let Some(serde_json::Value::Array(types)) = fields.get("type") {
+                let type_names = types.iter().filter_map(|value| value.as_str()).collect::<Vec<_>>();
+                let non_null_types = type_names.iter().filter(|name| **name != "null").collect::<Vec<_>>();
+                if type_names.len() == 2 && non_null_types.len() == 1 && type_names.contains(&"null") {
+                    let value_type = (*non_null_types[0]).to_string();
+                    fields.insert("type".to_string(), json!(value_type));
+                    fields.insert("nullable".to_string(), json!(true));
+                } else {
+                    return Err(format!("Gemini does not support JSON Schema type union: {}", serde_json::Value::Array(types.clone())));
+                }
+            }
+
+            for value in fields.values_mut() {
+                *value = normalize_gemini_schema(std::mem::take(value))?;
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                *value = normalize_gemini_schema(std::mem::take(value))?;
+            }
+        }
+        _ => {}
+    }
+    Ok(schema)
+}
+
+fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<serde_json::Value, String> {
     let mut body = json!({
         "systemInstruction": { "parts": [{ "text": system_prompt }] },
         "contents": [{ "parts": [{ "text": user_prompt }] }]
@@ -136,12 +165,12 @@ fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>)
     if !tools.is_empty() {
         let allowed_function_names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
         let function_declarations: Vec<serde_json::Value> = tools.into_iter().map(|tool| {
-            json!({
+            Ok(json!({
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters
-            })
-        }).collect();
+                "parameters": normalize_gemini_schema(tool.parameters)?
+            }))
+        }).collect::<Result<_, String>>()?;
 
         body["tools"] = json!([{
             "function_declarations": function_declarations
@@ -154,7 +183,7 @@ fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>)
         });
     }
 
-    body
+    Ok(body)
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -163,7 +192,7 @@ impl InferenceEngine for GeminiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         let client = reqwest::Client::new();
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", self.model, self.api_key);
-        let body = gemini_request_body(system_prompt, user_prompt, tools);
+        let body = gemini_request_body(system_prompt, user_prompt, tools)?;
         
         let res = client.post(&url)
             .json(&body)
@@ -451,11 +480,42 @@ mod tests {
             description: "Read memory".to_string(),
             parameters: json!({ "type": "object" }),
             company_id: None,
-        }]);
+        }]).unwrap();
 
         assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "AUTO");
         assert_eq!(body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"], json!(["read_memory"]));
         assert_eq!(body["tools"][0]["function_declarations"][0]["name"], "read_memory");
+    }
+
+    #[test]
+    fn gemini_payload_normalizes_nullable_schema_unions() {
+        let body = gemini_request_body("system", "user", vec![Tool {
+            name: "create_agent".to_string(),
+            description: "Create an agent".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "parent_id": { "type": ["string", "null"] }
+                }
+            }),
+            company_id: None,
+        }]).unwrap();
+        let parent_id = &body["tools"][0]["function_declarations"][0]["parameters"]["properties"]["parent_id"];
+
+        assert_eq!(parent_id["type"], "string");
+        assert_eq!(parent_id["nullable"], true);
+    }
+
+    #[test]
+    fn gemini_payload_rejects_unsupported_schema_unions_locally() {
+        let error = gemini_request_body("system", "user", vec![Tool {
+            name: "invalid_union".to_string(),
+            description: "Invalid union".to_string(),
+            parameters: json!({ "type": ["string", "number"] }),
+            company_id: None,
+        }]).unwrap_err();
+
+        assert!(error.contains("does not support JSON Schema type union"));
     }
 
     #[test]
