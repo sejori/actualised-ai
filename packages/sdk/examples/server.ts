@@ -341,8 +341,12 @@ app.use('/*', serveStatic({ root: '../web-ui/dist' }));
 // Fallback to index.html for SPA routing
 app.get('/*', serveStatic({ root: '../web-ui/dist', path: 'index.html' }));
 
-console.log(`Self-developing orchestrator listening on port ${port}`);
-serve({
-  fetch: app.fetch,
-  port
-});
+export { app };
+
+if (process.env.NODE_ENV !== 'test') {
+  console.log(`Self-developing orchestrator listening on port ${port}`);
+  serve({
+    fetch: app.fetch,
+    port
+  });
+}

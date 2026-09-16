@@ -1,4 +1,4 @@
-﻿use crate::state::{CompanyState, Project};
+use crate::state::{CompanyState, Project};
 use crate::inference::{InferenceEngine, MockInferenceEngine, InferenceResult, ToolCall};
 use crate::memory::MemoryManager;
 use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
@@ -132,7 +132,7 @@ impl Orchestrator {
         self.memory.read_shared_tree()
     }
 
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), String> {
         println!("Orchestrator staging work to inference queue...");
         
         // Take the configured inference engine
@@ -244,6 +244,8 @@ impl Orchestrator {
         println!("Elapsed Time: {:.2}s", stats.elapsed_time_sec);
         println!("Tokens/sec: {:.2}", stats.tokens_per_sec);
         println!("-----------------------------\n");
+
+        let mut errors = Vec::new();
 
         for (agent_id, response) in responses {
             match response {
@@ -393,10 +395,17 @@ impl Orchestrator {
                 Err(e) => {
                     println!("Inference Error for Agent {}: {}", agent_id, e);
                     self.agent_contexts.entry(agent_id.clone()).or_default().push_turn("agent", format!("Error: {}", e));
+                    errors.push(e.clone());
                 }
             }
         }
 
         println!("DFS/Batch Loop complete. Engine resting.");
+
+        if !errors.is_empty() {
+            return Err(errors.join("\n"));
+        }
+        
+        Ok(())
     }
 }

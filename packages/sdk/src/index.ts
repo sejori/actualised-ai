@@ -65,7 +65,6 @@ export class ActualisedClient {
 
   async updateCompanySettings(settings: any): Promise<void> {
     await this.company.updateCompanySettings(JSON.stringify(settings));
-    await this.company.configureInference(JSON.stringify(settings));
   }
 
   async getCompanySettings(): Promise<any | null> {

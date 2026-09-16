@@ -283,7 +283,7 @@ impl Company {
         if let Some(ref executor) = self.tool_executor {
             orchestrator.set_tool_executor(executor.clone());
         }
-        orchestrator.run().await;
+        orchestrator.run().await.map_err(|e| napi::Error::from_reason(e))?;
         Ok(())
     }
 

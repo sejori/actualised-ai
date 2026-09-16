@@ -151,7 +151,7 @@ impl OrchestratorWasm {
     // --- Orchestration ---
     #[wasm_bindgen]
     pub async fn run_orchestrator(&mut self) -> Result<(), JsValue> {
-        self.inner.run().await;
+        self.inner.run().await.map_err(|e| JsValue::from_str(&e))?;
         Ok(())
     }
 
