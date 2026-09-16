@@ -163,7 +163,6 @@ fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>)
     });
 
     if !tools.is_empty() {
-        let allowed_function_names: Vec<String> = tools.iter().map(|tool| tool.name.clone()).collect();
         let function_declarations: Vec<serde_json::Value> = tools.into_iter().map(|tool| {
             Ok(json!({
                 "name": tool.name,
@@ -177,8 +176,7 @@ fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>)
         }]);
         body["toolConfig"] = json!({
             "functionCallingConfig": {
-                "mode": "AUTO",
-                "allowedFunctionNames": allowed_function_names
+                "mode": "AUTO"
             }
         });
     }
@@ -474,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn gemini_payload_allows_only_offered_tools() {
+    fn gemini_payload_uses_auto_with_only_offered_tools() {
         let body = gemini_request_body("system", "user", vec![Tool {
             name: "read_memory".to_string(),
             description: "Read memory".to_string(),
@@ -483,8 +481,9 @@ mod tests {
         }]).unwrap();
 
         assert_eq!(body["toolConfig"]["functionCallingConfig"]["mode"], "AUTO");
-        assert_eq!(body["toolConfig"]["functionCallingConfig"]["allowedFunctionNames"], json!(["read_memory"]));
+        assert!(body["toolConfig"]["functionCallingConfig"].get("allowedFunctionNames").is_none());
         assert_eq!(body["tools"][0]["function_declarations"][0]["name"], "read_memory");
+        assert_eq!(body["tools"][0]["function_declarations"].as_array().unwrap().len(), 1);
     }
 
     #[test]
