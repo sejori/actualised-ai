@@ -167,10 +167,14 @@ impl CompanyState {
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
                      DEFINE TABLE OVERWRITE company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
                      DEFINE FIELD IF NOT EXISTS settings ON company TYPE option<object>;
-                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;
-                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE company_id.owner = $auth.id OR company_id = null;"
+                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    REMOVE FIELD IF EXISTS company_id ON agent;
+                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    REMOVE FIELD IF EXISTS company_id ON project;
+                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    REMOVE FIELD IF EXISTS company_id ON tool;
+                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    REMOVE FIELD IF EXISTS company_id ON issue;"
                 ).await?.check()
             }).await?;
         }
@@ -183,11 +187,11 @@ impl CompanyState {
                     format!("company:{}", target)
                 };
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
-                     SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
-                     SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
-                     SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
-                     SELECT record::id(id) AS id, name, settings FROM company WHERE id = type::record($target) LIMIT 1"
+                    "SELECT record::id(id) AS id, name, role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                     SELECT record::id(id) AS id, title, description FROM project WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                     SELECT name, description, parameters FROM tool WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                     SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                     SELECT record::id(id) AS id, name, settings FROM company WHERE type::string(id) = type::string($target) LIMIT 1"
                 ).bind(("target", full_target)).await
             } else {
                 db.query(
@@ -335,7 +339,7 @@ impl CompanyState {
         for ag in updates_needed {
             let content = record_content(&ag)?;
             let mut _res = self.db
-                .query("UPDATE $record CONTENT $agent")
+                .query("UPSERT $record CONTENT $agent")
                 .bind(("record", RecordId::new("agent", ag.id.clone())))
                 .bind(("agent", content))
                 .await.map_err(|e| e.to_string())?
@@ -376,7 +380,7 @@ impl CompanyState {
         for ag in updates_needed {
             let content = record_content(&ag)?;
             let mut _res = self.db
-                .query("UPDATE $record CONTENT $agent")
+                .query("UPSERT $record CONTENT $agent")
                 .bind(("record", RecordId::new("agent", ag.id.trim_start_matches("agent:"))))
                 .bind(("agent", content))
                 .await.map_err(|e| e.to_string())?
@@ -427,7 +431,7 @@ impl CompanyState {
             for ag in updates_needed {
                 let content = record_content(&ag)?;
                 let mut _res = self.db
-                    .query("UPDATE $record CONTENT $agent")
+                    .query("UPSERT $record CONTENT $agent")
                     .bind(("record", RecordId::new("agent", ag.id.trim_start_matches("agent:"))))
                     .bind(("agent", content))
                     .await.map_err(|e| e.to_string())?
@@ -462,7 +466,7 @@ impl CompanyState {
         tool.company_id = self.company_id.clone();
         #[cfg(not(target_arch = "wasm32"))]
         self.db
-            .query("UPDATE $record CONTENT $tool")
+            .query("UPSERT $record CONTENT $tool")
             .bind(("record", RecordId::new("tool", tool.name.clone())))
             .bind(("tool", tool.clone()))
             .await.map_err(|e| e.to_string())?
