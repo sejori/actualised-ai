@@ -1,4 +1,6 @@
-import { defineConfig, devices } from '@playwright/test';
+﻿import { defineConfig, devices } from '@playwright/test';
+
+const isCloud = process.env.TEST_MODE === 'cloud';
 
 export default defineConfig({
   testDir: './e2e',
@@ -8,7 +10,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173/actualised-ai/',
+    baseURL: isCloud ? 'http://localhost:8080/' : 'http://localhost:5173/actualised-ai/',
     trace: 'on-first-retry',
   },
   projects: [
@@ -18,8 +20,11 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm run dev',
-    url: 'http://localhost:5173/actualised-ai/',
+    command: isCloud 
+      ? 'pnpm run build:cloud && pnpm -C ../sdk exec tsx examples/server.ts' 
+      : 'pnpm run dev',
+    url: isCloud ? 'http://localhost:8080/' : 'http://localhost:5173/actualised-ai/',
     reuseExistingServer: !process.env.CI,
+    timeout: 120000,
   },
 });

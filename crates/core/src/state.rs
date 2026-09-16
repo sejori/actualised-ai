@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Deserializer};
 use crate::inference::Tool;
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb_types::{RecordId, SurrealValue};
@@ -187,7 +187,7 @@ impl CompanyState {
                     format!("company:{}", target)
                 };
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                    "SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, description FROM project WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE type::string(company_id) = type::string($target) OR company_id = null;
@@ -195,7 +195,7 @@ impl CompanyState {
                 ).bind(("target", full_target)).await
             } else {
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
+                    "SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
@@ -664,6 +664,28 @@ mod tests {
 
         let agent = state.agents.iter().find(|a| a.id == "agent:some_bot").unwrap();
         assert_eq!(agent.pending_messages, Some(vec!["hello".to_string()]));
+    }
+
+    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_database_hydration_and_queries() {
+        let state = CompanyState::init("mem://", None, None).await.unwrap();
+        
+        // Manually insert an agent with missing name/role to trigger NONE coercion bug
+        let res = state.db.query(
+            "CREATE agent:test_hydration_agent SET system_prompt = 'Test prompt', tools = []"
+        ).await.unwrap();
+        res.check().unwrap();
+        
+        // Query the DB manually using the exact same hydration logic
+        let mut response = state.db.query("SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent").await.unwrap();
+        let agents: Vec<Agent> = response.take(0).unwrap();
+        
+        assert_eq!(agents.len(), 1);
+        let hydrated_agent = &agents[0];
+        assert_eq!(hydrated_agent.id, "test_hydration_agent");
+        assert_eq!(hydrated_agent.name, "Unnamed Agent"); // Our default kick in
+        assert_eq!(hydrated_agent.role, "Agent");
     }
 }
 
