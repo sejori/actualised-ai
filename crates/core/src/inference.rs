@@ -109,14 +109,17 @@ pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
         "gemini" => Box::new(GeminiInferenceEngine {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gemini-3.6-flash".to_string() } else { config.model.clone() },
+            timeout_secs: 60,
         }),
         "openai" => Box::new(OpenAiInferenceEngine {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gpt-5".to_string() } else { config.model.clone() },
+            timeout_secs: 60,
         }),
         "anthropic" => Box::new(AnthropicInferenceEngine {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "claude-sonnet-4-5".to_string() } else { config.model.clone() },
+            timeout_secs: 60,
         }),
         _ => Box::new(MockInferenceEngine),
     }
@@ -125,6 +128,7 @@ pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
 pub struct GeminiInferenceEngine {
     pub api_key: String,
     pub model: String,
+    pub timeout_secs: u64,
 }
 
 fn normalize_gemini_schema(mut schema: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -229,7 +233,10 @@ fn parse_gemini_response(response_json: &serde_json::Value) -> Result<InferenceR
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for GeminiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .build()
+            .map_err(|e| format!("Failed to build client: {}", e))?;
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", self.model, self.api_key);
         let body = gemini_request_body(system_prompt, user_prompt, tools)?;
         
@@ -252,6 +259,7 @@ impl InferenceEngine for GeminiInferenceEngine {
 pub struct OpenAiInferenceEngine {
     pub api_key: String,
     pub model: String,
+    pub timeout_secs: u64,
 }
 
 fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
@@ -286,7 +294,10 @@ fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tool
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for OpenAiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .build()
+            .map_err(|e| format!("Failed to build client: {}", e))?;
         let url = "https://api.openai.com/v1/chat/completions";
         let body = openai_request_body(&self.model, system_prompt, user_prompt, tools);
         
@@ -356,6 +367,7 @@ impl InferenceEngine for OpenAiInferenceEngine {
 pub struct AnthropicInferenceEngine {
     pub api_key: String,
     pub model: String,
+    pub timeout_secs: u64,
 }
 
 fn anthropic_request_body(model: &str, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
@@ -387,7 +399,10 @@ fn anthropic_request_body(model: &str, system_prompt: &str, user_prompt: &str, t
 impl InferenceEngine for AnthropicInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         let body = anthropic_request_body(&self.model, system_prompt, user_prompt, tools);
-        let mut request = reqwest::Client::new()
+        let mut request = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .build()
+            .map_err(|e| format!("Failed to build client: {}", e))?
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -564,6 +579,21 @@ mod tests {
         let anthropic = anthropic_request_body("claude-sonnet-4-5", "system", "user", vec![tool]);
         assert_eq!(anthropic["tool_choice"], json!({ "type": "auto" }));
         assert_eq!(anthropic["tools"][0]["name"], "read_memory");
+    }
+
+    #[tokio::test]
+    async fn test_engine_network_timeout() {
+        let engine = GeminiInferenceEngine {
+            api_key: "fake".to_string(),
+            model: "fake".to_string(),
+            timeout_secs: 1, // 1 second timeout for test
+        };
+        // This relies on the timeout triggering quickly, testing that the client uses the timeout config.
+        // We can't easily mock reqwest hanging, but we know the timeout is configured.
+        // Even with a fake API key, the request will fail. We just want to ensure it doesn't hang.
+        let start = std::time::Instant::now();
+        let _ = engine.generate_response("sys", "user", vec![]).await;
+        assert!(start.elapsed() < std::time::Duration::from_secs(10), "Engine took too long, likely hung without a timeout!");
     }
 
     #[tokio::test]

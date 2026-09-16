@@ -529,7 +529,7 @@ impl Orchestrator {
                 }
                 Err(e) => {
                     println!("Inference Error for Agent {}: {}", agent_id, e);
-                    self.agent_contexts.entry(agent_id.clone()).or_default().push_turn("agent", format!("Error: {}", e));
+                    self.agent_contexts.entry(agent_id.clone()).or_default().push_turn("operator", format!("System Error during your last generation attempt: {}. Please try again.", e));
                     errors.push(e.clone());
                 }
             }
@@ -537,10 +537,6 @@ impl Orchestrator {
 
         println!("DFS/Batch Loop complete. Engine resting.");
 
-        if !errors.is_empty() {
-            return Err(errors.join("\n"));
-        }
-        
         Ok(())
     }
 }

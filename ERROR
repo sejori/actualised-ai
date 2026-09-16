@@ -1,0 +1,1 @@
+2026-09-16 15:22:06 *   **Issue Triage:** I monitor issue trackers, categorizing bugs by severity (e.g., soundness holes, regressions, ergonomics). I label issues for specific teams (e.g., `T-libs`, `T-compiler`) and mark approachable tasks with `E-easy` or `E-mentor` to encourage new contributors.

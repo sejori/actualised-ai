@@ -101,6 +101,7 @@ const sendTelegramMessage = async (token: string, chatId: string | number, text:
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ chat_id: chatId, text }),
+    signal: AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error(`Telegram sendMessage failed with status ${response.status}`);
 };
@@ -121,14 +122,37 @@ export const processTelegramMessage = async (
 
   while (loopRunning && currentTurn < maxTurns) {
     currentTurn++;
+    const contextBefore = await client.getAgentContext(rootAgentId) as { history?: Array<{ role: string; content: string }> };
+    const historyLengthBefore = contextBefore.history?.length ?? 0;
+
     await client.start();
 
-    const context = await client.getAgentContext(rootAgentId) as { history?: Array<{ role: string; content: string }> };
-    const latestAgentReply = [...(context.history ?? [])].reverse().find(turn => turn.role === 'agent')?.content;
+    const contextAfter = await client.getAgentContext(rootAgentId) as { history?: Array<{ role: string; content: string }> };
+    const historyAfter = contextAfter.history ?? [];
     
-    if (!latestAgentReply) {
+    // Find turns added during this start() cycle
+    const newTurns = historyAfter.slice(historyLengthBefore);
+    
+    if (newTurns.length === 0) {
       break;
     }
+
+    const latestTurn = newTurns[newTurns.length - 1];
+
+    if (latestTurn.role === 'operator' && latestTurn.content.startsWith('System Error')) {
+      // The agent errored out and the system queued an error message for it. Retry.
+      console.warn('Agent encountered a system error, retrying...');
+      loopRunning = true;
+      continue;
+    }
+
+    // Process new agent replies
+    const newAgentReplies = newTurns.filter(turn => turn.role === 'agent');
+    if (newAgentReplies.length === 0) {
+      break;
+    }
+
+    const latestAgentReply = newAgentReplies[newAgentReplies.length - 1].content;
 
     const usedTelegramTool = latestAgentReply.startsWith('Called tools:') && latestAgentReply.includes('telegram_notify');
     
