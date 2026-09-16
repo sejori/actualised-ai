@@ -302,8 +302,9 @@ impl CompanyState {
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Cascade delete
-            self.db.query("DELETE agent WHERE company_id = ; DELETE project WHERE company_id = ; DELETE tool WHERE company_id = ; DELETE shared_file WHERE company_id = ; DELETE company WHERE id = ;")
-                .bind(("id", id))
+            let full_id = if id.contains(':') { id.to_string() } else { format!("company:{}", id) };
+            self.db.query("DELETE agent WHERE company_id = type::record($id); DELETE project WHERE company_id = type::record($id); DELETE tool WHERE company_id = type::record($id); DELETE shared_file WHERE company_id = type::record($id); DELETE company WHERE id = type::record($id);")
+                .bind(("id", full_id))
                 .await.map_err(|e| e.to_string())?.check().map_err(|e| e.to_string())?;
         }
         Ok(())
