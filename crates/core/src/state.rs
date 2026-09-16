@@ -183,7 +183,7 @@ impl CompanyState {
                     format!("company:{}", target)
                 };
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_record(parent_id) THEN record::id(parent_id) ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
+                    "SELECT record::id(id) AS id, name, role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(record::id(parent_id) ?? parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, description FROM project WHERE company_id = type::record($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE company_id = type::record($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE company_id = type::record($target) OR company_id = null;
@@ -191,7 +191,7 @@ impl CompanyState {
                 ).bind(("target", full_target)).await
             } else {
                 db.query(
-                    "SELECT record::id(id) AS id, name, role, IF type::is_record(parent_id) THEN record::id(parent_id) ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
+                    "SELECT record::id(id) AS id, name, role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(record::id(parent_id) ?? parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt, tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
@@ -313,7 +313,7 @@ impl CompanyState {
 
     pub async fn add_agent(&mut self, mut agent: Agent) -> Result<(), String> {
         let mut updates_needed = Vec::new();
-        let id = agent.id.clone();
+        let id = agent.id.replace("agent:", "");
         agent.company_id = self.company_id.clone();
         
         if self.agents.is_empty() {
@@ -352,7 +352,7 @@ impl CompanyState {
         if new_agent.parent_id.is_none() {
             for a in self.agents.iter_mut() {
                 if a.id.replace("agent:", "") != target_id && a.parent_id.is_none() {
-                    a.parent_id = Some(format!("agent:{}", target_id));
+                    a.parent_id = Some(target_id.clone());
                     updates_needed.push(a.clone());
                 }
             }
@@ -399,7 +399,7 @@ impl CompanyState {
                         a.parent_id = None;
                         updates_needed.push(a.clone());
                     } else if a.parent_id.as_deref().map(|s| s.replace("agent:", "")) == Some(target_id.clone()) {
-                        a.parent_id = Some(new_root_id.clone());
+                        a.parent_id = Some(new_root_id.replace("agent:", ""));
                         updates_needed.push(a.clone());
                     }
                 }
@@ -517,7 +517,7 @@ mod tests {
             id: if id.contains(':') { id.to_string() } else { format!("agent:{}", id) },
             name: "Test Agent".to_string(),
             role: "Role".to_string(),
-            parent_id: parent_id.map(|s| if s.contains(':') { s.to_string() } else { format!("agent:{}", s) }),
+            parent_id: parent_id.map(|s| s.to_string()),
             system_prompt: "Prompt".to_string(),
             tools: vec![],
             telemetry: None,
@@ -557,7 +557,7 @@ mod tests {
 
         // agent2 should be the new root, agent1 should report to agent2
         assert_eq!(agent2.parent_id, None);
-        assert_eq!(agent1.parent_id, Some("agent:agent2".to_string()));
+        assert_eq!(agent1.parent_id, Some("agent2".to_string()));
     }
 
     #[tokio::test]
@@ -575,7 +575,7 @@ mod tests {
         let new_root = state.agents.iter().find(|a| a.id == "agent:child").unwrap();
 
         assert_eq!(new_root.parent_id, None);
-        assert_eq!(old_root.parent_id, Some("agent:child".to_string()));
+        assert_eq!(old_root.parent_id, Some("child".to_string()));
     }
 
     #[tokio::test]
@@ -593,7 +593,7 @@ mod tests {
         let new_root = state.agents.iter().find(|a| a.id == "agent:manager").unwrap();
 
         assert_eq!(new_root.parent_id, None);
-        assert_eq!(old_root.parent_id, Some("agent:manager".to_string()));
+        assert_eq!(old_root.parent_id, Some("manager".to_string()));
     }
 
     #[tokio::test]
@@ -613,7 +613,7 @@ mod tests {
 
         // One of the children must be promoted to root, and the other must report to it
         assert_eq!(new_root.parent_id, None);
-        assert_eq!(other_child.parent_id, Some(new_root.id.clone()));
+        assert_eq!(other_child.parent_id, Some(new_root.id.replace("agent:", "")));
     }
 
     #[tokio::test]
@@ -629,7 +629,7 @@ mod tests {
         assert_eq!(state.agents.len(), 2);
         
         let leaf = state.agents.iter().find(|a| a.id == "agent:leaf").unwrap();
-        assert_eq!(leaf.parent_id, Some("agent:root".to_string()));
+        assert_eq!(leaf.parent_id, Some("root".to_string()));
     }
 
     #[tokio::test]
