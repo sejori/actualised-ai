@@ -141,6 +141,14 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
   const [dynamicModels, setDynamicModels] = createSignal<string[]>([]);
   const [isFetchingModels, setIsFetchingModels] = createSignal(false);
 
+  onSettled(() => {
+    if (orchestrator instanceof RemoteOrchestrator) {
+      void orchestrator.get_orchestrator_status()
+        .then(status => setIsContinuousLoop(status.enabled))
+        .catch(cause => setError(cause instanceof Error ? cause.message : 'Failed to load orchestrator status'));
+    }
+  });
+
   createEffect(
     () => ({
       open: isSettingsOpen(),
@@ -322,6 +330,19 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
   };
 
   const toggleContinuousLoop = async () => {
+    if (orchestrator instanceof RemoteOrchestrator) {
+      try {
+        const status = isContinuousLoop()
+          ? await orchestrator.pause_orchestrator()
+          : await orchestrator.start_orchestrator();
+        setIsContinuousLoop(status.enabled);
+        if (status.lastError) setError(status.lastError);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : 'Failed to update orchestrator status');
+      }
+      return;
+    }
+
     if (isContinuousLoop()) {
       setIsContinuousLoop(false);
       return;

@@ -44,16 +44,13 @@ impl Default for RateLimitConfig {
 }
 
 pub struct InferenceQueue {
-    engine: Arc<Box<dyn InferenceEngine>>,
+    engine: Arc<dyn InferenceEngine>,
     rate_limit: RateLimitConfig,
 }
 
 impl InferenceQueue {
-    pub fn new(engine: Box<dyn InferenceEngine>, rate_limit: RateLimitConfig) -> Self {
-        Self {
-            engine: Arc::new(engine),
-            rate_limit,
-        }
+    pub fn new(engine: Arc<dyn InferenceEngine>, rate_limit: RateLimitConfig) -> Self {
+        Self { engine, rate_limit }
     }
 
     /// Processes a batch of requests in parallel, respecting the configured concurrency and

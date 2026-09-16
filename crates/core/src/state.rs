@@ -270,17 +270,24 @@ impl CompanyState {
     }
 
     pub async fn update_company_settings(&mut self, settings: serde_json::Value) -> Result<(), String> {
+        let mut merged_settings = self.settings.clone().unwrap_or_else(|| serde_json::json!({}));
+        if let (Some(existing), Some(updates)) = (merged_settings.as_object_mut(), settings.as_object()) {
+            existing.extend(updates.clone());
+        } else {
+            merged_settings = settings;
+        }
+
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(company_id) = &self.company_id {
                 self.db.query("UPDATE type::record('company', $id) SET settings = $settings")
                     .bind(("id", company_id.replace("company:", "")))
-                    .bind(("settings", settings.clone()))
+                    .bind(("settings", merged_settings.clone()))
                     .await.map_err(|e| e.to_string())?
                     .check().map_err(|e| e.to_string())?;
             }
         }
-        self.settings = Some(settings);
+        self.settings = Some(merged_settings);
         Ok(())
     }
 
@@ -687,6 +694,39 @@ mod tests {
         assert_eq!(hydrated_agent.name, "Unnamed Agent"); // Our default kick in
         assert_eq!(hydrated_agent.role, "Agent");
     }
+
+    #[tokio::test]
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn test_query_running_company_ids_filters_by_persisted_state() {
+        let state = CompanyState::init("mem://", None, None).await.unwrap();
+        state.db.query(
+            "CREATE company:enabled SET settings = { executionEnabled: true };
+             CREATE company:paused SET settings = { executionEnabled: false };
+             CREATE company:unset SET name = 'Unset';"
+        ).await.unwrap().check().unwrap();
+
+        let ids = query_running_company_ids(&state.db).await.unwrap();
+
+        assert_eq!(ids, vec!["company:enabled".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_settings_updates_preserve_server_managed_fields() {
+        let mut state = create_state().await;
+        state.settings = Some(serde_json::json!({
+            "executionEnabled": true,
+            "telegramChatId": 123,
+            "provider": "gemini"
+        }));
+
+        state.update_company_settings(serde_json::json!({ "provider": "openai" })).await.unwrap();
+
+        assert_eq!(state.settings, Some(serde_json::json!({
+            "executionEnabled": true,
+            "telegramChatId": 123,
+            "provider": "openai"
+        })));
+    }
 }
 
 
@@ -700,6 +740,27 @@ pub async fn get_companies(db_path: &str, token: &str) -> Result<String, String>
     let mut response = db.query("SELECT record::id(id) AS id, name FROM company").await.map_err(|e| e.to_string())?;
     let companies: Vec<serde_json::Value> = response.take(0).map_err(|e| e.to_string())?;
     serde_json::to_string(&companies).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn query_running_company_ids(db: &Surreal<Any>) -> Result<Vec<String>, String> {
+    let mut response = db.query(
+        "SELECT VALUE type::string(id) FROM company WHERE settings.executionEnabled = true"
+    ).await.map_err(|e| e.to_string())?;
+    response.take(0).map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn get_running_company_ids(db_path: &str) -> Result<String, String> {
+    let url = if db_path.contains("://") { db_path.to_string() } else { format!("surrealkv://{}", db_path) };
+    let db = connect(&url).await.map_err(|e| e.to_string())?;
+    if let (Ok(user), Ok(pass)) = (std::env::var("SURREALDB_USER"), std::env::var("SURREALDB_PASS")) {
+        db.signin(Root { username: user, password: pass }).await.map_err(|e| e.to_string())?;
+    }
+    db.use_ns("actualised").use_db("core").await.map_err(|e| e.to_string())?;
+
+    let company_ids = query_running_company_ids(&db).await?;
+    serde_json::to_string(&company_ids).map_err(|e| e.to_string())
 }
 
 

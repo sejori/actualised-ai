@@ -76,6 +76,10 @@ export class ActualisedClient {
     return JSON.parse(await Company.getCompanies(dbPath, token));
   }
 
+  static async getRunningCompanyIds(dbPath: string): Promise<string[]> {
+    return JSON.parse(await Company.getRunningCompanyIds(dbPath));
+  }
+
   async deleteCompany(id: string): Promise<void> {
     await this.company.deleteCompany(id);
   }
@@ -86,6 +90,10 @@ export class ActualisedClient {
 
   getCompanyName(): Promise<string | null> {
     return this.company.getCompanyName();
+  }
+
+  getCompanyId(): Promise<string | null> {
+    return this.company.getCompanyId();
   }
 
   foundCompany(name: string): Promise<void> {

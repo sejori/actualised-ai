@@ -24,13 +24,17 @@ impl NotificationDispatcher {
                 "text": message
             });
 
-            self.client.post(&url)
+            let response = self.client.post(&url)
                 .json(&payload)
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
-            
-            println!("Sent Telegram notification: {}", message);
+
+            if !response.status().is_success() {
+                return Err(format!("Telegram sendMessage failed with status {}", response.status()));
+            }
+
+            println!("Sent Telegram notification");
             Ok(())
         } else {
             // Fallback or just ignore if not configured

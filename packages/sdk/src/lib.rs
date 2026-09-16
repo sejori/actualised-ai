@@ -108,6 +108,11 @@ impl Company {
     }
 
     #[napi]
+    pub async fn get_running_company_ids(db_path: String) -> napi::Result<String> {
+        actualised_core::state::get_running_company_ids(&db_path).await.map_err(napi::Error::from_reason)
+    }
+
+    #[napi]
     pub async fn signin(db_path: String, email: String, pass: String) -> napi::Result<String> {
         actualised_core::auth::signin(&db_path, &email, &pass).await
             .map_err(napi::Error::from_reason)
@@ -132,6 +137,11 @@ impl Company {
     #[napi]
     pub async fn get_company_name(&self) -> Option<String> {
         self.orchestrator.lock().await.state.company_name.clone()
+    }
+
+    #[napi]
+    pub async fn get_company_id(&self) -> Option<String> {
+        self.orchestrator.lock().await.state.company_id.clone()
     }
 
     #[napi]

@@ -3,6 +3,7 @@ import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { setCookie, getCookie } from 'hono/cookie';
 import { ActualisedClient } from '../src/index';
+import { CompanyRunner } from './company-runner';
 
 const app = new Hono();
 const port = Number(process.env.PORT) || 8080;
@@ -10,12 +11,41 @@ const port = Number(process.env.PORT) || 8080;
 const streamClients = new Set<ReadableStreamDefaultController<Uint8Array>>();
 const encoder = new TextEncoder();
 
-// Update schema on boot using root credentials
-ActualisedClient.create(process.env.SURREALDB_URL || 'mem://')
-  .then(() => console.log('Successfully updated SurrealDB schema on boot'))
-  .catch(e => console.error('Failed to update schema on boot', e));
-
 const clientMap = new Map<string, ActualisedClient>();
+const runnerMap = new Map<string, CompanyRunner>();
+const transientRunnerKeys = new WeakMap<ActualisedClient, string>();
+let transientRunnerSequence = 0;
+
+const getRunner = async (client: ActualisedClient) => {
+  const companyId = await client.getCompanyId();
+  let key = companyId ?? transientRunnerKeys.get(client);
+  if (!key) {
+    key = `transient:${++transientRunnerSequence}`;
+    transientRunnerKeys.set(client, key);
+  }
+  let runner = runnerMap.get(key);
+  if (!runner) {
+    runner = new CompanyRunner(client, 500, publishStateChanged);
+    runnerMap.set(key, runner);
+  }
+  return runner;
+};
+
+const restoreCompanyRunners = async () => {
+  const dbPath = process.env.SURREALDB_URL || 'mem://';
+  await ActualisedClient.create(dbPath);
+  const companyIds = await ActualisedClient.getRunningCompanyIds(dbPath);
+  await Promise.all(companyIds.map(async companyId => {
+    const client = await ActualisedClient.createSystemClient(dbPath, companyId);
+    clientMap.set(`system:${companyId.replace('company:', '')}`, client);
+    await (await getRunner(client)).restore();
+  }));
+  console.log(`Restored ${companyIds.length} enabled company runner(s)`);
+};
+
+if (process.env.NODE_ENV !== 'test') {
+  void restoreCompanyRunners().catch(error => console.error('Failed to restore company runners:', error));
+}
 
 const requireClient = async (c: any) => {
   const token = getCookie(c, 'session_token') || c.req.query('token');
@@ -39,6 +69,7 @@ const requireClient = async (c: any) => {
   
   const client = await ActualisedClient.createWithToken(process.env.SURREALDB_URL || 'mem://', token, companyId);
   clientMap.set(cacheKey, client);
+  await (await getRunner(client)).restore();
   return client;
 };
 
@@ -60,6 +91,36 @@ const publishStateChanged = () => {
     } catch {
       streamClients.delete(controller);
     }
+  }
+};
+
+type TelegramClient = Pick<ActualisedClient, 'queueMessage' | 'start' | 'getAgentContext'>;
+
+const sendTelegramMessage = async (token: string, chatId: string | number, text: string) => {
+  const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+  if (!response.ok) throw new Error(`Telegram sendMessage failed with status ${response.status}`);
+};
+
+export const processTelegramMessage = async (
+  client: TelegramClient,
+  rootAgentId: string,
+  text: string,
+  telegramToken: string,
+  chatId: string | number,
+  sendMessage = sendTelegramMessage,
+) => {
+  await client.queueMessage(rootAgentId, `[TELEGRAM MESSAGE FROM USER]: ${text}\n\nNOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`);
+  await client.start();
+
+  const context = await client.getAgentContext(rootAgentId) as { history?: Array<{ role: string; content: string }> };
+  const latestAgentReply = [...(context.history ?? [])].reverse().find(turn => turn.role === 'agent')?.content;
+  const usedTelegramTool = latestAgentReply?.startsWith('Called tools:') && latestAgentReply.includes('telegram_notify');
+  if (latestAgentReply && !usedTelegramTool) {
+    await sendMessage(telegramToken, chatId, latestAgentReply);
   }
 };
 
@@ -153,9 +214,24 @@ app.post('/api/config/rate-limits', async (c) => {
   });
   return c.json({ configured: true });
 });
+app.get('/api/orchestrator/status', async (c) => {
+  const client = await requireClient(c);
+  return c.json((await getRunner(client)).status());
+});
+app.post('/api/orchestrator/start', async (c) => {
+  const client = await requireClient(c);
+  return c.json(await (await getRunner(client)).start());
+});
+app.post('/api/orchestrator/pause', async (c) => {
+  const client = await requireClient(c);
+  return c.json(await (await getRunner(client)).pause());
+});
 app.post('/api/orchestrator/run', async (c) => {
-  await (await requireClient(c)).start();
+  const client = await requireClient(c);
+  await client.start();
+  await (await getRunner(client)).restore();
   publishStateChanged();
+  return c.json(await snapshot(client));
 });
 app.put('/api/settings', async (c) => {
   const settings = await c.req.json();
@@ -166,10 +242,7 @@ app.put('/api/settings', async (c) => {
 
   // If a Telegram Bot Token is provided, register the webhook automatically
   if (settings.telegramBotToken) {
-    const companyId = await client.getCompanyName().then(async () => {
-      // Actually we just need the company ID. The client might not expose it directly,
-      // but we can query it via getCompanies. Let's assume ActualisedClient could expose getCompanyId.
-      // Wait, requireClient looks it up from the header or query param or defaults to the first company.
+    const companyId = c.req.header('X-Company-ID') || c.req.query('companyId') || await client.getCompanyName().then(async () => {
       const token = getCookie(c, 'session_token') || c.req.query('token');
       const companies = await ActualisedClient.getCompanies(process.env.SURREALDB_URL || 'mem://', token as string);
       return (companies[0] as any).id;
@@ -182,7 +255,8 @@ app.put('/api/settings', async (c) => {
       const webhookUrl = `${host}/api/webhooks/telegram/${rawId}`;
       
       try {
-        await fetch(`https://api.telegram.org/bot${settings.telegramBotToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+        const response = await fetch(`https://api.telegram.org/bot${settings.telegramBotToken}/setWebhook?url=${encodeURIComponent(webhookUrl)}`);
+        if (!response.ok) throw new Error(`Telegram setWebhook failed with status ${response.status}`);
         console.log(`Registered Telegram webhook for company ${rawId} to ${webhookUrl}`);
       } catch (err) {
         console.error('Failed to register telegram webhook', err);
@@ -214,7 +288,7 @@ app.post('/api/webhooks/telegram/:companyId', async (c) => {
       
       const settings = await client.getCompanySettings();
       const telegramToken = settings?.telegramBotToken;
-      console.log(`Telegram webhook: company=${companyId} settings=${JSON.stringify(settings)} token=${telegramToken ? 'SET' : 'MISSING'}`);
+      console.log(`Telegram webhook received: company=${companyId} token=${telegramToken ? 'SET' : 'MISSING'}`);
       
       // Automatically capture and save the chat ID so agents can push notifications back to the user later
       if (settings && !settings.telegramChatId) {
@@ -240,32 +314,18 @@ app.post('/api/webhooks/telegram/:companyId', async (c) => {
         return c.json({ ok: true });
       }
 
-      const instruction = `[TELEGRAM MESSAGE FROM USER]: ${text}
+      if (!telegramToken) return c.json({ ok: true });
 
-NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
-
-        // Process asynchronously
-        setTimeout(async () => {
-          try {
-            await client.queueMessage(rootAgent.id, instruction);
-            await client.start();
-            publishStateChanged();
-          } catch (e) {
-            console.error('Telegram background processing error:', e);
-            if (telegramToken && chatId) {
-              const errorMessage = e instanceof Error ? e.message : String(e);
-              fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  chat_id: chatId,
-                  text: `⚠️ **System Error**\n\nAn error occurred while processing your message:\n\`\`\`\n${errorMessage}\n\`\`\`\n\nPlease check the company settings or try again.`,
-                  parse_mode: 'Markdown'
-                })
-              }).catch(() => {});
-            }
-          }
-        }, 0);
+      try {
+        await processTelegramMessage(client, rootAgent.id, text, telegramToken, chatId);
+        await (await getRunner(client)).restore();
+        publishStateChanged();
+      } catch (error) {
+        console.error('Telegram processing error:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        await sendTelegramMessage(telegramToken, chatId, `System error while processing your message: ${errorMessage}`)
+          .catch(sendError => console.error('Failed to send Telegram error response:', sendError));
+      }
     } catch (e) {
       console.error('Telegram webhook error processing message:', e);
     }

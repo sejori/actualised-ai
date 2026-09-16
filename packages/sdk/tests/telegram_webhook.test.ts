@@ -1,76 +1,60 @@
 import { describe, expect, it, vi } from 'vitest';
-import { app } from '../examples/server';
+import { app, processTelegramMessage } from '../examples/server';
 import { ActualisedClient } from '../src/index';
 
-describe('Telegram Webhook Error Handling', () => {
-  it('should catch orchestrator errors and send them to the user via Telegram', async () => {
-    // Mock global fetch to spy on the outgoing telegram api requests
-    const fetchSpy = vi.spyOn(global, 'fetch').mockImplementation(async (url: any, options: any) => {
-      return new Response(JSON.stringify({ ok: true }));
-    });
+describe('Telegram inference flow', () => {
+  it('sends a plain-text model response when no structured Telegram call was emitted', async () => {
+    const client = {
+      queueMessage: vi.fn(async () => {}),
+      start: vi.fn(async () => {}),
+      getAgentContext: vi.fn(async () => ({ history: [{ role: 'agent', content: 'Hello from the root agent' }] })),
+    };
+    const sendMessage = vi.fn(async () => {});
 
-    // 1. Create a client and seed a company
-    const client = await ActualisedClient.createSystemClient('mem://', 'company:test_telegram');
-    await client.foundCompany('Telegram Test Company');
-    // Also we need to add a root agent for the webhook to find
-    await client.addAgent({
-      id: 'agent_root',
-      name: 'Root Agent',
-      role: 'Manager',
-      system_prompt: 'You manage the system',
-      tools: ['telegram_notify']
-    });
+    await processTelegramMessage(client, 'root', 'Hello', 'token', 123, sendMessage);
 
-    // Mock createSystemClient to reuse our memory DB instance
-    vi.spyOn(ActualisedClient, 'createSystemClient').mockResolvedValue(client);
-    
-    // Set up dummy telegram credentials in the DB
-    await client.updateCompanySettings({
-      telegramBotToken: 'dummy_token',
-      telegramChatId: '123456789'
-    });
-    
-    // Set up bad API config so inference fails
-    await client.configureInference({
-      provider: 'gemini',
-      api_key: 'invalid_key',
-      model: 'gemini-1.5-pro'
-    });
+    expect(client.queueMessage).toHaveBeenCalledWith('root', expect.stringContaining('Hello'));
+    expect(client.start).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledWith('token', 123, 'Hello from the root agent');
+  });
 
-    // 2. Simulate incoming Telegram webhook via Hono app
-    const res = await app.request('/api/webhooks/telegram/test_telegram', {
+  it('does not duplicate a structured telegram_notify call', async () => {
+    const client = {
+      queueMessage: vi.fn(async () => {}),
+      start: vi.fn(async () => {}),
+      getAgentContext: vi.fn(async () => ({ history: [{ role: 'agent', content: 'Called tools: telegram_notify' }] })),
+    };
+    const sendMessage = vi.fn(async () => {});
+
+    await processTelegramMessage(client, 'root', 'Hello', 'token', 123, sendMessage);
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('awaits processing failures and sends an error response before returning', async () => {
+    const client = {
+      getCompanySettings: vi.fn(async () => ({ telegramBotToken: 'dummy_token', telegramChatId: '123' })),
+      updateCompanySettings: vi.fn(async () => {}),
+      getAgents: vi.fn(async () => [{ id: 'root', parent_id: null }]),
+      queueMessage: vi.fn(async () => { throw new Error('inference unavailable'); }),
+      start: vi.fn(async () => {}),
+      getAgentContext: vi.fn(async () => ({ history: [] })),
+    };
+    vi.spyOn(ActualisedClient, 'createSystemClient').mockResolvedValue(client as unknown as ActualisedClient);
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+
+    const response = await app.request('/api/webhooks/telegram/test_awaited_error', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        message: {
-          chat: { id: 123456789 },
-          text: 'Hello bot'
-        }
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: { chat: { id: 123 }, text: 'Hello bot' } }),
     });
 
-    expect(res.status).toBe(200);
-
-    // Wait for the async setTimeout in server.ts to complete and rust to hit Gemini API
-    await new Promise((resolve) => setTimeout(resolve, 3000));
-
-    // 3. Verify that fetch was called to send the error message!
-    expect(fetchSpy).toHaveBeenCalledWith(
-      'https://api.telegram.org/botdummy_token/sendChatAction',
-      expect.objectContaining({
-        method: 'POST',
-        body: expect.stringContaining('typing')
-      })
-    );
-    
-    const sendMsgCalls = fetchSpy.mock.calls.filter(call => call[0] === 'https://api.telegram.org/botdummy_token/sendMessage');
-    expect(sendMsgCalls.length).toBeGreaterThan(0);
-    
-    const errorPayload = JSON.parse(sendMsgCalls[0][1].body as string);
-    expect(errorPayload.text).toContain('System Error');
+    expect(response.status).toBe(200);
+    const errorCall = fetchSpy.mock.calls.find(call => String(call[0]).endsWith('/sendMessage'));
+    expect(errorCall).toBeDefined();
+    expect(JSON.parse(errorCall![1]!.body as string).text).toContain('inference unavailable');
 
     fetchSpy.mockRestore();
+    vi.restoreAllMocks();
   });
 });

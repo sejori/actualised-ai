@@ -4,6 +4,7 @@ export class Company {
   static signup(dbPath: string, email: string, pass: string): Promise<string>;
   static signin(dbPath: string, email: string, pass: string): Promise<string>;
   static getCompanies(dbPath: string, token: string): Promise<string>;
+  static getRunningCompanyIds(dbPath: string): Promise<string>;
   static initSystemClient(stateDirectory: string, dbPath: string, companyId: string): Promise<Company>;
   
   updateCompanySettings(settingsJson: string): Promise<void>;
@@ -13,6 +14,7 @@ export class Company {
   setPacing(requestsPerMinute: number, workingHoursStart?: string, workingHoursEnd?: string): Promise<void>;
   configureInference(configJson: string): Promise<void>;
   getCompanyName(): Promise<string | null>;
+  getCompanyId(): Promise<string | null>;
   foundCompany(name: string): Promise<void>;
   addAgent(agentJson: string): Promise<void>;
   updateAgent(id: string, agentJson: string): Promise<void>;

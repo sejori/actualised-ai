@@ -165,6 +165,15 @@ impl MemoryManager {
         Ok(())
     }
 
+    pub fn read_shared(&self, path: &str) -> Result<String, String> {
+        self.shared
+            .lock()
+            .unwrap()
+            .get(path)
+            .cloned()
+            .ok_or_else(|| format!("Shared file {} not found", path))
+    }
+
     /// Returns the shared team directory as a nested folder/file tree.
     pub fn read_shared_tree(&self) -> Vec<MemoryNode> {
         build_tree(&self.shared.lock().unwrap())

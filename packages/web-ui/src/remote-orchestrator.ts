@@ -1,4 +1,5 @@
 type Bootstrap = { company_name: string | null; agents: unknown[]; projects: unknown[]; tools: unknown[] };
+export type OrchestratorStatus = { enabled: boolean; running: boolean; lastError: string | null };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -89,6 +90,18 @@ export class RemoteOrchestrator {
 
   async run_orchestrator() {
     this.update(await request<Bootstrap>('/api/orchestrator/run', { method: 'POST' }));
+  }
+
+  get_orchestrator_status() {
+    return request<OrchestratorStatus>('/api/orchestrator/status');
+  }
+
+  start_orchestrator() {
+    return request<OrchestratorStatus>('/api/orchestrator/start', { method: 'POST' });
+  }
+
+  pause_orchestrator() {
+    return request<OrchestratorStatus>('/api/orchestrator/pause', { method: 'POST' });
   }
 
   configure_inference(config: unknown) {

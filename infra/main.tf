@@ -23,13 +23,16 @@ resource "google_cloud_run_v2_service" "orchestrator" {
 
   template {
     scaling {
-      # Scale to zero when not in use
-      min_instance_count = 0
+      min_instance_count = 1
       max_instance_count = 1
     }
 
     containers {
       image = var.orchestrator_image
+
+      resources {
+        cpu_idle = false
+      }
 
       startup_probe {
         http_get {
