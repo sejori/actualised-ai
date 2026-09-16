@@ -167,13 +167,13 @@ impl CompanyState {
                         DURATION FOR TOKEN 30d, FOR SESSION 30d;
                      DEFINE TABLE OVERWRITE company SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE owner = $auth.id;
                      DEFINE FIELD IF NOT EXISTS settings ON company TYPE option<object>;
-                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE agent SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE IF type::is_string(company_id) THEN type::record(company_id).owner = $auth.id ELSE company_id = null OR company_id = NONE END;
                     REMOVE FIELD IF EXISTS company_id ON agent;
-                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE project SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE IF type::is_string(company_id) THEN type::record(company_id).owner = $auth.id ELSE company_id = null OR company_id = NONE END;
                     REMOVE FIELD IF EXISTS company_id ON project;
-                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE IF type::is_string(company_id) THEN type::record(company_id).owner = $auth.id ELSE company_id = null OR company_id = NONE END;
                     REMOVE FIELD IF EXISTS company_id ON tool;
-                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE type::record(company_id).owner = $auth.id OR company_id = null;
+                    DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE IF type::is_string(company_id) THEN type::record(company_id).owner = $auth.id ELSE company_id = null OR company_id = NONE END;
                     REMOVE FIELD IF EXISTS company_id ON issue;"
                 ).await?.check()
             }).await?;
