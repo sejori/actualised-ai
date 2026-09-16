@@ -34,3 +34,10 @@ Thumbs.db
 *.tfvars.json
 scratch.py
 bootstrap.py
+  
+# Build Artifacts and DB  
+*.node  
+*.tmp  
+*.db  
+*.db/  
+*.swp/ 
