@@ -41,14 +41,13 @@ issue_triggers ?? NONE AS issue_triggers
 ```
 This pattern must be applied to **every** `Option<Vec<...>>` field in all SELECT queries that hydrate state. Plain `Option<T>` fields for scalar types (strings, numbers) typically deserialize from null fine; it is specifically `Option<Vec<...>>` and `Option<Object>` types that fail.
 
-## 8. Agent ID Prefix Convention
-Agent IDs are stored in SurrealDB as `agent:<bare_id>` (e.g. `agent:abc123`). However, after hydration through `record::id(id)`, the prefix is **stripped** — agents in Rust memory hold bare IDs like `"abc123"`.
+## 8. Agent ID Prefix Convention and Parent ID Hydration
+Agent IDs are stored in SurrealDB as `agent:<bare_id>` (e.g. `agent:abc123`). After hydration through `record::id(id)`, the prefix is **stripped** — agents in Rust memory hold bare IDs like `"abc123"`.
 
-When comparing IDs in Rust (e.g. in `update_agent`, `remove_agent`, `queue_message`), you **must strip** the `"agent:"` prefix from both sides before comparing:
-```rust
-a.id.replace("agent:", "") == target_id.replace("agent:", "")
+Because `parent_id` is stored in a schemaless table, it may exist in the database as either a strict record link (`agent:node_project_manager`) or a raw JSON string (`"node_project_manager"` or `"agent:node_project_manager"`). 
+
+To ensure the agent tree is always hydrated properly regardless of how `parent_id` was written, the SELECT query universally coerces it to a bare string:
+```sql
+IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(record::id(parent_id) ?? parent_id), 'agent:', '') ELSE NONE END AS parent_id
 ```
-When **assigning** a `parent_id` field (which is written back to the DB and compared in tests), re-add the prefix:
-```rust
-a.parent_id = Some(format!("agent:{}", target_id));
-```
+This means `parent_id` safely exists in memory as just the bare ID (e.g. `"node_project_manager"`). You no longer need to prefix `parent_id` with `agent:` when manipulating agents in memory (e.g., in `add_agent` or `update_agent`). Bare strings are safely written back and gracefully casted on the next hydration.
