@@ -1,6 +1,6 @@
 # Actualised.ai
 
-Build the company that builds the product.
+Build the team that builds the product.
 
 Actualised.ai is a framework designed to let a single human run a company of AI agents. Rather than a single agent operating within a human company, this system orchestrates a hierarchical graph of agents (Team Leads, Developers, Designers, Marketers) that autonomously communicate, delegate, and execute projects.
 
