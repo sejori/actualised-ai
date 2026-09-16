@@ -1,4 +1,4 @@
-name: E2E Tests
+﻿name: E2E Tests
 
 on:
   push:
@@ -11,9 +11,19 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest
     
+    services:
+      surrealdb:
+        image: surrealdb/surrealdb:latest
+        ports:
+          - 8000:8000
+        command: start --log trace --user root --pass root memory
+        
     steps:
     - uses: actions/checkout@v4
     
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+      
     - name: Install pnpm
       uses: pnpm/action-setup@v3
       with:
@@ -28,10 +38,23 @@ jobs:
     - name: Install dependencies
       run: pnpm install
       
+    - name: Build SDK
+      run: pnpm --filter @actualised-ai/sdk run build
+      
     - name: Install Playwright Browsers
       run: pnpm --filter @actualised-ai/web-ui exec playwright install --with-deps chromium
       
-    - name: Run Playwright tests
+    - name: Run Playwright tests (Local Mode)
+      env:
+        TEST_MODE: local
+      run: pnpm --filter @actualised-ai/web-ui run test:e2e
+      
+    - name: Run Playwright tests (Cloud Mode)
+      env:
+        TEST_MODE: cloud
+        SURREALDB_URL: ws://127.0.0.1:8000
+        SURREALDB_USER: root
+        SURREALDB_PASS: root
       run: pnpm --filter @actualised-ai/web-ui run test:e2e
       
     - uses: actions/upload-artifact@v4

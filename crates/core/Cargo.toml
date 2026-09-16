@@ -1,10 +1,10 @@
-[package]
+﻿[package]
 name = "actualised-core"
 version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["local-db"]
 local-db = ["surrealdb/kv-surrealkv"]
 
 [dependencies]

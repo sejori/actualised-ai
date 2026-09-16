@@ -26,5 +26,6 @@ export default defineConfig({
     url: isCloud ? 'http://localhost:8080/' : 'http://localhost:5173/actualised-ai/',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
+    
   },
 });
