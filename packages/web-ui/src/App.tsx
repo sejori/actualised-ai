@@ -25,7 +25,7 @@ type OrchestratorClient = OrchestratorWasm | RemoteOrchestrator;
 
 const INFERENCE_PROVIDERS = [
   { id: 'gemini', label: 'Google Gemini', models: ['gemini-3.6-flash', 'gemini-3.6-pro'], disabled: false },
-  { id: 'openai', label: 'OpenAI (coming soon)', models: ['gpt-5', 'gpt-5-mini'], disabled: true },
+  { id: 'openai', label: 'OpenAI', models: ['gpt-5', 'gpt-5-mini'], disabled: false },
   { id: 'anthropic', label: 'Anthropic (coming soon)', models: ['claude-4.5-sonnet'], disabled: true },
 ] as const;
 const SERVICE_TIERS = ['default', 'flex', 'priority'];
@@ -137,6 +137,49 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
   const [isEditingAgent, setIsEditingAgent] = createSignal(false);
   const [draftAgent, setDraftAgent] = createSignal<Agent>();
   const [isContinuousLoop, setIsContinuousLoop] = createSignal(false);
+  
+  const [dynamicModels, setDynamicModels] = createSignal<string[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = createSignal(false);
+
+  createEffect(
+    () => ({
+      open: isSettingsOpen(),
+      key: draftSettings().apiKey,
+      provider: draftSettings().provider
+    }),
+    (state) => {
+      if (!state.open || !state.key) {
+        setDynamicModels([]);
+        return;
+      }
+      
+      setIsFetchingModels(true);
+      let url = '';
+      if (state.provider === 'gemini') url = 'https://generativelanguage.googleapis.com/v1beta/openai/v1/models';
+      else if (state.provider === 'openai') url = 'https://api.openai.com/v1/models';
+      else {
+        setIsFetchingModels(false);
+        setDynamicModels([]);
+        return;
+      }
+
+      fetch(url, { headers: { 'Authorization': `Bearer ${state.key}` } })
+        .then(r => r.json())
+        .then(d => {
+          if (d && d.data && Array.isArray(d.data)) {
+            const models = d.data.map((m: any) => m.id);
+            setDynamicModels(models.map((m: string) => m.startsWith('models/') ? m.substring(7) : m));
+          } else {
+            setDynamicModels([]);
+          }
+        })
+        .catch(e => {
+          console.error('Failed to fetch models', e);
+          setDynamicModels([]);
+        })
+        .finally(() => setIsFetchingModels(false));
+    }
+  );
 
   const applyInferenceSettings = async (settings: InferenceSettings) => {
     try {
@@ -759,8 +802,7 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
               value={draftSettings().provider}
               onChange={(event) => {
                 const provider = event.currentTarget.value;
-                const firstModel = INFERENCE_PROVIDERS.find((p) => p.id === provider)?.models[0] ?? '';
-                setDraftSettings((prev) => ({ ...prev, provider, model: firstModel }));
+                setDraftSettings((prev) => ({ ...prev, provider, model: '' }));
               }}
             >
               <For each={INFERENCE_PROVIDERS}>{(provider) => <option value={provider.id} disabled={provider.disabled}>{provider.label}</option>}</For>
@@ -768,10 +810,13 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
           </label>
           <label>Model
             <select
+              disabled={isFetchingModels()}
               value={draftSettings().model}
               onChange={(event) => setDraftSettings((prev) => ({ ...prev, model: event.currentTarget.value }))}
             >
-              <For each={INFERENCE_PROVIDERS.find((p) => p.id === draftSettings().provider)?.models ?? []}>{(model) => <option value={model}>{model}</option>}</For>
+              <For each={dynamicModels().length > 0 ? dynamicModels() : INFERENCE_PROVIDERS.find((p) => p.id === draftSettings().provider)?.models ?? []}>
+                {(model) => <option value={model}>{model}</option>}
+              </For>
             </select>
           </label>
           <label>Service tier

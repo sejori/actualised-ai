@@ -1,38 +1,39 @@
-use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use async_trait::async_trait;
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb_types::SurrealValue;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(SurrealValue))]
 pub struct Tool {
-    pub company_id: Option<String>,
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    pub company_id: Option<String>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub args: serde_json::Value,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceStats {
     pub prompt_tokens: usize,
     pub completion_tokens: usize,
     pub total_tokens: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InferenceResult {
     Text(String),
     ToolCalls(Vec<ToolCall>),
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceResponse {
     pub result: InferenceResult,
     pub stats: InferenceStats,
@@ -97,7 +98,7 @@ pub struct InferenceConfig {
 pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
     let mut resolved_key = config.api_key.clone();
     if resolved_key.trim().is_empty() {
-        if let Ok(env_key) = std::env::var("GEMINI_API_KEY") {
+        if let Ok(env_key) = std::env::var("INFERENCE_API_KEY") {
             resolved_key = env_key;
         } else {
             return Box::new(MockInferenceEngine);
@@ -108,6 +109,10 @@ pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
         "gemini" => Box::new(GeminiInferenceEngine {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gemini-3.6-flash".to_string() } else { config.model.clone() },
+        }),
+        "openai" => Box::new(OpenAiInferenceEngine {
+            api_key: resolved_key,
+            model: if config.model.trim().is_empty() { "gpt-5".to_string() } else { config.model.clone() },
         }),
         _ => Box::new(MockInferenceEngine),
     }
@@ -199,6 +204,105 @@ impl InferenceEngine for GeminiInferenceEngine {
     }
 }
 
+pub struct OpenAiInferenceEngine {
+    pub api_key: String,
+    pub model: String,
+}
+
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl InferenceEngine for OpenAiInferenceEngine {
+    async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
+        let client = reqwest::Client::new();
+        let url = "https://api.openai.com/v1/chat/completions";
+        
+        let mut body = json!({
+            "model": self.model,
+            "messages": [
+                { "role": "system", "content": system_prompt },
+                { "role": "user", "content": user_prompt }
+            ]
+        });
+
+        if !tools.is_empty() {
+            let tools_json: Vec<serde_json::Value> = tools.into_iter().map(|t| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters
+                    }
+                })
+            }).collect();
+            
+            body["tools"] = json!(tools_json);
+            body["tool_choice"] = json!("auto");
+        }
+        
+        let res = client.post(url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("Request failed: {}", e))?;
+            
+        if !res.status().is_success() {
+            let error_text = res.text().await.unwrap_or_default();
+            return Err(format!("OpenAI API Error: {}", error_text));
+        }
+        
+        let response_json: serde_json::Value = res.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        
+        let mut stats = InferenceStats {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        };
+        
+        if let Some(usage) = response_json.get("usage") {
+            stats.prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            stats.completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            stats.total_tokens = usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        }
+
+        if let Some(choices) = response_json.get("choices").and_then(|c| c.as_array()) {
+            if let Some(message) = choices[0].get("message") {
+                if let Some(tool_calls) = message.get("tool_calls").and_then(|tc| tc.as_array()) {
+                    let mut parsed_calls = Vec::new();
+                    for tc in tool_calls {
+                        if tc.get("type").and_then(|t| t.as_str()) == Some("function") {
+                            if let Some(func) = tc.get("function") {
+                                let name = func.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
+                                let args_str = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
+                                let args: serde_json::Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                                let id = tc.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string();
+                                parsed_calls.push(ToolCall { id, name, args });
+                            }
+                        }
+                    }
+                    if !parsed_calls.is_empty() {
+                        return Ok(InferenceResponse {
+                            result: InferenceResult::ToolCalls(parsed_calls),
+                            stats,
+                        });
+                    }
+                }
+                
+                if let Some(text) = message.get("content").and_then(|c| c.as_str()) {
+                    return Ok(InferenceResponse {
+                        result: InferenceResult::Text(text.to_string()),
+                        stats,
+                    });
+                }
+            }
+        }
+
+        Err("Failed to parse OpenAI response".to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,4 +360,3 @@ mod tests {
         }
     }
 }
-

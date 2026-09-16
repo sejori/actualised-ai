@@ -1,4 +1,4 @@
-use crate::state::{CompanyState, Project};
+﻿use crate::state::{CompanyState, Project};
 use crate::inference::{InferenceEngine, MockInferenceEngine, InferenceResult, ToolCall};
 use crate::memory::MemoryManager;
 use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
@@ -52,7 +52,7 @@ pub struct Orchestrator {
 
 impl Orchestrator {
     pub fn new(state: CompanyState, memory: MemoryManager) -> Self {
-        let mut api_key = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+        let mut api_key = std::env::var("INFERENCE_API_KEY").unwrap_or_default();
         let mut model = "gemini-3.6-flash".to_string();
         let mut provider = "gemini".to_string();
 
