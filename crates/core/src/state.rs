@@ -212,13 +212,28 @@ impl CompanyState {
         let company_name = company_docs.first().and_then(|d| d.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()));
         let settings = company_docs.first().and_then(|d| d.get("settings").cloned());
         
+        let repository = settings.as_ref().and_then(|s| {
+            let token = s.get("githubToken").and_then(|v| v.as_str());
+            let repo_url = s.get("githubRepoUrl").and_then(|v| v.as_str());
+            if let (Some(t), Some(u)) = (token, repo_url) {
+                if !t.is_empty() && !u.is_empty() {
+                    return Some(RepositoryConfig {
+                        provider: "github".to_string(),
+                        repo_url: u.to_string(),
+                        access_token: t.to_string(),
+                    });
+                }
+            }
+            None
+        });
+        
         Ok(Self {
             db,
             agents,
             projects,
             tools,
             issues,
-            repository: None,
+            repository,
             company_name,
             company_id,
             settings,

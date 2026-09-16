@@ -13,7 +13,7 @@ type Project = { id: string; title: string; description: string };
 type Tool = { name: string; description: string; parameters: any };
 type SharedFile = { id: string; name: string; content: string };
 type HoverPosition = { x: number; y: number };
-type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string; telegramBotToken?: string };
+type InferenceSettings = { provider: string; model: string; serviceTier: string; apiKey: string; telegramBotToken?: string; githubToken?: string; githubRepoUrl?: string };
 type RateLimitSettings = { maxConcurrentRequests: number; requestsPerMinute: number };
 type ConversationTurn = { role: 'operator' | 'agent'; content: string };
 type AgentContext = { pending_messages?: string[]; history?: ConversationTurn[] };
@@ -798,6 +798,24 @@ const Dashboard: Component<{ companyId: string; companyName: string; companies: 
               placeholder="123456789:ABCdefGHIjklmNOPQrsTUVwxyZ"
               value={draftSettings().telegramBotToken || ''}
               onInput={(event) => setDraftSettings((prev) => ({ ...prev, telegramBotToken: event.currentTarget.value }))}
+            />
+          </label>
+          <label>GitHub Repository URL (Optional)
+            <input
+              type="text"
+              autocomplete="off"
+              placeholder="owner/repo (e.g. sejori/actualised-ai)"
+              value={draftSettings().githubRepoUrl || ''}
+              onInput={(event) => setDraftSettings((prev) => ({ ...prev, githubRepoUrl: event.currentTarget.value }))}
+            />
+          </label>
+          <label>GitHub Personal Access Token (Optional)
+            <input
+              type="password"
+              autocomplete="off"
+              placeholder="ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+              value={draftSettings().githubToken || ''}
+              onInput={(event) => setDraftSettings((prev) => ({ ...prev, githubToken: event.currentTarget.value }))}
             />
           </label>
           <fieldset class="rate-limit-fieldset">
