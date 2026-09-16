@@ -184,6 +184,47 @@ fn gemini_request_body(system_prompt: &str, user_prompt: &str, tools: Vec<Tool>)
     Ok(body)
 }
 
+fn parse_gemini_response(response_json: &serde_json::Value) -> Result<InferenceResponse, String> {
+    let usage = response_json.get("usageMetadata");
+    let stats = InferenceStats {
+        prompt_tokens: usage.and_then(|value| value.get("promptTokenCount")).and_then(|value| value.as_u64()).unwrap_or(0) as usize,
+        completion_tokens: usage.and_then(|value| value.get("candidatesTokenCount")).and_then(|value| value.as_u64()).unwrap_or(0) as usize,
+        total_tokens: usage.and_then(|value| value.get("totalTokenCount")).and_then(|value| value.as_u64()).unwrap_or(0) as usize,
+    };
+    let candidate = response_json.get("candidates")
+        .and_then(|value| value.as_array())
+        .and_then(|candidates| candidates.first());
+
+    if let Some(parts) = candidate.and_then(|value| value.get("content")).and_then(|value| value.get("parts")).and_then(|value| value.as_array()) {
+        let tool_calls = parts.iter().filter_map(|part| {
+            let function_call = part.get("functionCall")?;
+            Some(ToolCall {
+                id: "gemini_tool_call".to_string(),
+                name: function_call.get("name").and_then(|value| value.as_str()).unwrap_or_default().to_string(),
+                args: function_call.get("args").cloned().unwrap_or_else(|| json!({})),
+            })
+        }).collect::<Vec<_>>();
+        if !tool_calls.is_empty() {
+            return Ok(InferenceResponse { result: InferenceResult::ToolCalls(tool_calls), stats });
+        }
+
+        let text = parts.iter()
+            .filter_map(|part| part.get("text").and_then(|value| value.as_str()))
+            .filter(|text| !text.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !text.is_empty() {
+            return Ok(InferenceResponse { result: InferenceResult::Text(text), stats });
+        }
+    }
+
+    let finish_reason = candidate.and_then(|value| value.get("finishReason")).and_then(|value| value.as_str()).unwrap_or("UNKNOWN");
+    let finish_message = candidate.and_then(|value| value.get("finishMessage")).and_then(|value| value.as_str());
+    let block_reason = response_json.get("promptFeedback").and_then(|value| value.get("blockReason")).and_then(|value| value.as_str());
+    let detail = finish_message.or(block_reason).unwrap_or("response contained no text or function call");
+    Err(format!("Gemini returned no usable response (finish reason: {finish_reason}; detail: {detail})"))
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for GeminiInferenceEngine {
@@ -204,46 +245,7 @@ impl InferenceEngine for GeminiInferenceEngine {
         }
         
         let response_json: serde_json::Value = res.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
-        
-        let mut stats = InferenceStats {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        };
-        
-        if let Some(usage) = response_json.get("usageMetadata") {
-            stats.prompt_tokens = usage.get("promptTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            stats.completion_tokens = usage.get("candidatesTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            stats.total_tokens = usage.get("totalTokenCount").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-        }
-
-        if let Some(parts) = response_json["candidates"][0]["content"]["parts"].as_array() {
-            let mut tool_calls = Vec::new();
-            for part in parts {
-                if let Some(func_call) = part.get("functionCall") {
-                    tool_calls.push(ToolCall {
-                        id: "gemini_tool_call".to_string(), // Gemini doesn't always provide an ID in basic genContent
-                        name: func_call["name"].as_str().unwrap_or_default().to_string(),
-                        args: func_call["args"].clone(),
-                    });
-                }
-            }
-            if !tool_calls.is_empty() {
-                return Ok(InferenceResponse {
-                    result: InferenceResult::ToolCalls(tool_calls),
-                    stats,
-                });
-            }
-            
-            if let Some(text) = parts[0].get("text") {
-                return Ok(InferenceResponse {
-                    result: InferenceResult::Text(text.as_str().unwrap_or_default().to_string()),
-                    stats,
-                });
-            }
-        }
-
-        Err("Failed to parse Gemini response parts".to_string())
+        parse_gemini_response(&response_json)
     }
 }
 
@@ -515,6 +517,35 @@ mod tests {
         }]).unwrap_err();
 
         assert!(error.contains("does not support JSON Schema type union"));
+    }
+
+    #[test]
+    fn gemini_parser_reads_text_after_non_text_parts() {
+        let response = json!({
+            "candidates": [{
+                "content": { "parts": [
+                    { "thoughtSignature": "redacted" },
+                    { "text": "Telegram reply" }
+                ]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": { "promptTokenCount": 2, "candidatesTokenCount": 3, "totalTokenCount": 5 }
+        });
+
+        let parsed = parse_gemini_response(&response).unwrap();
+        assert!(matches!(parsed.result, InferenceResult::Text(ref text) if text == "Telegram reply"));
+        assert_eq!(parsed.stats.total_tokens, 5);
+    }
+
+    #[test]
+    fn gemini_parser_reports_finish_metadata_for_empty_content() {
+        let response = json!({
+            "candidates": [{ "finishReason": "MALFORMED_FUNCTION_CALL", "finishMessage": "Malformed function call" }]
+        });
+
+        let error = parse_gemini_response(&response).unwrap_err();
+        assert!(error.contains("MALFORMED_FUNCTION_CALL"));
+        assert!(error.contains("Malformed function call"));
     }
 
     #[test]
