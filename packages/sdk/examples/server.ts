@@ -239,16 +239,28 @@ app.post('/api/webhooks/telegram/:companyId', async (c) => {
 
 NOTE: You MUST reply to the user using the 'telegram_notify' tool immediately.`;
 
-      // Process asynchronously
-      setTimeout(async () => {
-        try {
-          await client.queueMessage(rootAgent.id, instruction);
-          await client.start();
-          publishStateChanged();
-        } catch (e) {
-          console.error('Telegram background processing error:', e);
-        }
-      }, 0);
+        // Process asynchronously
+        setTimeout(async () => {
+          try {
+            await client.queueMessage(rootAgent.id, instruction);
+            await client.start();
+            publishStateChanged();
+          } catch (e) {
+            console.error('Telegram background processing error:', e);
+            if (telegramToken && chatId) {
+              const errorMessage = e instanceof Error ? e.message : String(e);
+              fetch(`https://api.telegram.org/bot${telegramToken}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: chatId,
+                  text: `⚠️ **System Error**\n\nAn error occurred while processing your message:\n\`\`\`\n${errorMessage}\n\`\`\`\n\nPlease check the company settings or try again.`,
+                  parse_mode: 'Markdown'
+                })
+              }).catch(() => {});
+            }
+          }
+        }, 0);
     } catch (e) {
       console.error('Telegram webhook error processing message:', e);
     }
