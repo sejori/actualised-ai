@@ -204,8 +204,13 @@ app.post('/api/webhooks/telegram/:companyId', async (c) => {
     if (!chatId) return c.json({ ok: true });
 
     try {
-      // Create a system client bound to this company's scope
-      const client = await ActualisedClient.createSystemClient(process.env.SURREALDB_URL || 'mem://', `company:${companyId}`);
+      // Create or retrieve a system client bound to this company's scope
+      const cacheKey = `system:${companyId}`;
+      let client = clientMap.get(cacheKey);
+      if (!client) {
+        client = await ActualisedClient.createSystemClient(process.env.SURREALDB_URL || 'mem://', `company:${companyId}`);
+        clientMap.set(cacheKey, client);
+      }
       
       const settings = await client.getCompanySettings();
       const telegramToken = settings?.telegramBotToken;
