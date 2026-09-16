@@ -233,10 +233,12 @@ fn parse_gemini_response(response_json: &serde_json::Value) -> Result<InferenceR
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for GeminiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| format!("Failed to build client: {}", e))?;
+        let mut builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            builder = builder.timeout(std::time::Duration::from_secs(self.timeout_secs));
+        }
+        let client = builder.build().map_err(|e| format!("Failed to build client: {}", e))?;
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}", self.model, self.api_key);
         let body = gemini_request_body(system_prompt, user_prompt, tools)?;
         
@@ -294,10 +296,12 @@ fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tool
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl InferenceEngine for OpenAiInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| format!("Failed to build client: {}", e))?;
+        let mut builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            builder = builder.timeout(std::time::Duration::from_secs(self.timeout_secs));
+        }
+        let client = builder.build().map_err(|e| format!("Failed to build client: {}", e))?;
         let url = "https://api.openai.com/v1/chat/completions";
         let body = openai_request_body(&self.model, system_prompt, user_prompt, tools);
         
@@ -399,10 +403,12 @@ fn anthropic_request_body(model: &str, system_prompt: &str, user_prompt: &str, t
 impl InferenceEngine for AnthropicInferenceEngine {
     async fn generate_response(&self, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> Result<InferenceResponse, String> {
         let body = anthropic_request_body(&self.model, system_prompt, user_prompt, tools);
-        let mut request = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()
-            .map_err(|e| format!("Failed to build client: {}", e))?
+        let mut builder = reqwest::Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            builder = builder.timeout(std::time::Duration::from_secs(self.timeout_secs));
+        }
+        let mut request = builder.build().map_err(|e| format!("Failed to build client: {}", e))?
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
