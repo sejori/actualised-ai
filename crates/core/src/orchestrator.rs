@@ -347,6 +347,14 @@ impl Orchestrator {
                 let _ = self.state.update_agent(&agent.id, updated_agent).await;
             }
 
+            let has_issues = agent.issue_triggers.as_ref().map_or(false, |triggers| !triggers.is_empty());
+
+            // If an agent has no new inputs (no messages, no tasks, no issue triggers), it should rest.
+            // This prevents idle agents (including root agents) from running in an infinite loop and burning tokens.
+            if pending.is_empty() && overdue_tasks.is_empty() && !has_issues {
+                continue;
+            }
+
             let mut final_system_prompt = agent.system_prompt.clone();
             
             // INJECT MEMORY INDEX for long-term retention & caching efficiency
