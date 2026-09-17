@@ -168,6 +168,10 @@ export const processTelegramMessage = async (
       loopRunning = false;
     }
   }
+
+  if (loopRunning && currentTurn >= maxTurns) {
+    await sendMessage(telegramToken, chatId, "I'm sorry, I hit my maximum loop limit while processing your request. I've stopped to save resources. Please try rephrasing your request.");
+  }
 };
 
 app.onError((error, c) => {

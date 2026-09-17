@@ -24,6 +24,7 @@ fn root_admin_tools() -> Vec<crate::inference::Tool> {
         ("read_agent_memory", "Read a memory file belonging to any agent.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "file_name": { "type": "string" } }, "required": ["agent_id", "file_name"] })),
         ("read_shared_file", "Read a company shared file.", json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] })),
         ("write_shared_file", "Create or update a company shared file.", json!({ "type": "object", "properties": { "path": { "type": "string" }, "content": { "type": "string" } }, "required": ["path", "content"] })),
+        ("send_message", "Send a message, assign a task, or hand off work to another agent in the company. This will wake them up to process your request.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "message": { "type": "string" } }, "required": ["agent_id", "message"] })),
         ("start_company", "Enable continuous server-side company execution.", json!({ "type": "object", "properties": {} })),
         ("stop_company", "Pause continuous server-side company execution after this cycle.", json!({ "type": "object", "properties": {} })),
         ("update_inference_settings", "Update the inference provider and model. Existing credentials are preserved.", json!({ "type": "object", "properties": { "provider": { "type": "string", "enum": ["gemini", "openai", "anthropic"] }, "model": { "type": "string" }, "service_tier": { "type": "string" } }, "required": ["provider", "model"] })),
@@ -173,6 +174,17 @@ impl Orchestrator {
                 let path = call.args["path"].as_str().ok_or_else(|| "path is required".to_string());
                 let content = call.args["content"].as_str().ok_or_else(|| "content is required".to_string());
                 path.and_then(|path| content.and_then(|content| self.memory.write_shared(path, content).map_err(|error| error.to_string()).map(|_| format!("Updated shared file {}", path))))
+            }
+            "send_message" => {
+                let target_id = call.args["agent_id"].as_str().ok_or_else(|| "agent_id is required".to_string());
+                let message = call.args["message"].as_str().ok_or_else(|| "message is required".to_string());
+                match (target_id, message) {
+                    (Ok(target), Ok(msg)) => {
+                        let final_msg = format!("Message from root agent {}: {}", agent_id, msg);
+                        self.queue_message(target, final_msg).await.map(|_| format!("Message successfully sent to {}. They will process it on their next turn.", target))
+                    }
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
             }
             "start_company" | "stop_company" => {
                 let enabled = call.name == "start_company";
