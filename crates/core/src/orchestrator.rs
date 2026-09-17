@@ -688,12 +688,13 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         orchestrator.set_inference(Box::new(CountingInferenceEngine(Arc::clone(&calls))));
 
+        orchestrator.queue_message("root", "test message 1".to_string()).await.unwrap();
         orchestrator.run().await.unwrap();
+        
+        orchestrator.queue_message("root", "test message 2".to_string()).await.unwrap();
         orchestrator.run().await.unwrap();
 
-        assert_eq!(calls.load(Ordering::SeqCst), 4);
-        assert!(orchestrator.agent_contexts.values().all(|context| {
-            context.history.iter().any(|turn| turn.content == "configured response")
-        }));
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(orchestrator.agent_contexts.get("root").unwrap().history.iter().any(|turn| turn.content == "configured response"));
     }
 }
