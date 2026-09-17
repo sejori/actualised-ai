@@ -20,7 +20,7 @@ const MAX_HISTORY_TURNS: usize = 40;
 fn root_admin_tools() -> Vec<crate::inference::Tool> {
     use serde_json::json;
     [
-        ("inspect_company", "Inspect the company structure, projects, tools, and non-secret inference settings.", json!({ "type": "object", "properties": {} })),
+        ("inspect_company", "Inspect the company structure, projects, tools, and non-secret inference settings. WARNING: Do NOT call this multiple times. Call it ONCE to gather state, then proceed with your task.", json!({ "type": "object", "properties": {} })),
         ("read_agent_memory", "Read a memory file belonging to any agent.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "file_name": { "type": "string" } }, "required": ["agent_id", "file_name"] })),
         ("read_shared_file", "Read a company shared file.", json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] })),
         ("write_shared_file", "Create or update a company shared file.", json!({ "type": "object", "properties": { "path": { "type": "string" }, "content": { "type": "string" } }, "required": ["path", "content"] })),
