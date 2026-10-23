@@ -221,3 +221,91 @@ pub fn build_chat_jsonl_line(
 
     line_obj.to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_chat_jsonl_line_structure() {
+        let line = build_chat_jsonl_line(
+            "item_001",
+            "deepseek-ai/DeepSeek-V4.1-Flash",
+            "You are an assistant.",
+            "Tell me a joke.",
+            Some(0.7),
+        );
+
+        let parsed: serde_json::Value = serde_json::from_str(&line).expect("JSONL line must be valid JSON");
+        assert_eq!(parsed["custom_id"], "item_001");
+        assert_eq!(parsed["method"], "POST");
+        assert_eq!(parsed["url"], "/v1/chat/completions");
+        assert_eq!(parsed["body"]["model"], "deepseek-ai/DeepSeek-V4.1-Flash");
+        assert_eq!(parsed["body"]["messages"][0]["role"], "system");
+        assert_eq!(parsed["body"]["messages"][0]["content"], "You are an assistant.");
+        assert_eq!(parsed["body"]["messages"][1]["role"], "user");
+        assert_eq!(parsed["body"]["messages"][1]["content"], "Tell me a joke.");
+        let temp = parsed["body"]["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_batch_job_record_serde() {
+        let record = BatchJobRecord {
+            id: "batch_123".to_string(),
+            company_id: Some("comp_456".to_string()),
+            requesting_agent_id: "agent_lead".to_string(),
+            input_file_id: "file_in_789".to_string(),
+            output_file_id: Some("file_out_012".to_string()),
+            error_file_id: None,
+            status: "completed".to_string(),
+            endpoint: "/v1/chat/completions".to_string(),
+            total_requests: 10,
+            completed_requests: 10,
+            failed_requests: 0,
+            destination_path: Some("batches/job_123.jsonl".to_string()),
+            created_at: 1700000000,
+            completed_at: Some(1700000050),
+        };
+
+        let json_str = serde_json::to_string(&record).unwrap();
+        let decoded: BatchJobRecord = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(decoded.id, "batch_123");
+        assert_eq!(decoded.status, "completed");
+        assert_eq!(decoded.completed_requests, 10);
+        assert_eq!(decoded.destination_path.as_deref(), Some("batches/job_123.jsonl"));
+    }
+
+    #[test]
+    fn test_batch_output_entry_parsing() {
+        let raw_output = r#"{
+            "id": "batch_req_001",
+            "custom_id": "sword-desc",
+            "response": {
+                "status_code": 200,
+                "request_id": "req-xyz",
+                "body": {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "A rusted iron longsword forged in ancient flames."
+                            }
+                        }
+                    ]
+                }
+            },
+            "error": null
+        }"#;
+
+        let entry: BatchOutputEntry = serde_json::from_str(raw_output).expect("Must parse BatchOutputEntry");
+        assert_eq!(entry.custom_id, "sword-desc");
+        let resp = entry.response.expect("Must have response");
+        assert_eq!(resp.status_code, 200);
+        assert_eq!(
+            resp.body["choices"][0]["message"]["content"],
+            "A rusted iron longsword forged in ancient flames."
+        );
+    }
+}

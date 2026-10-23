@@ -73,28 +73,30 @@ For bulk asynchronous workloads (e.g., generating hundreds of documents, dialogu
 ## 3. Phased Implementation Roadmap
 
 ### Phase 1: Doubleword Provider & Per-Agent Model Configuration
-* [ ] **Inference Layer (`crates/core/src/inference.rs`)**:
-  * Add `base_url` to `InferenceConfig`.
-  * Support `Doubleword` (OpenAI-compatible) and pass `temperature` down to the completions request payload.
-* [ ] **State Schema Upgrade (`crates/core/src/state.rs`)**:
-  * Add `model`, `provider`, and `temperature` fields to `Agent`.
-  * Ensure SurrealDB migrations / permissions preserve these fields.
-* [ ] **SDK & NAPI Bindings (`packages/sdk`)**:
-  * Expose `model`, `provider`, and `temperature` in the TypeScript `Agent` interface.
+* [x] **Inference Layer (`crates/core/src/inference.rs`)**:
+  * Added `base_url` to `InferenceConfig`.
+  * Supported `Doubleword` (OpenAI-compatible) and passed `temperature` down to the completions request payload.
+* [x] **State Schema Upgrade (`crates/core/src/state.rs`)**:
+  * Added `model`, `provider`, and `temperature` fields to `Agent`.
+  * SurrealDB migrations and permissions preserve these fields.
+* [x] **SDK & NAPI Bindings (`packages/sdk`)**:
+  * Exposed `model`, `provider`, and `temperature` in the TypeScript `Agent` interface.
+  * Verified live with `packages/sdk/examples/test_doubleword_company.ts` (PR #22).
 
 ### Phase 2: Doubleword JSONL Batch Engine
-* [ ] **Batch Module (`crates/core/src/batch.rs`)**:
-  * JSONL serializer for batch completions.
+* [x] **Batch Module (`crates/core/src/batch.rs`)**:
+  * JSONL serializer for batch completions (`build_chat_jsonl_line`).
   * File upload (`/v1/files`) and batch creation (`/v1/batches`).
-  * Batch status polling and result retrieval.
-* [ ] **Batch Agent Tool**:
-  * Expose `submit_batch_job` and `check_batch_status` to agents.
-* [ ] **Completion Poller & Turn Injection**:
-  * Hook a periodic batch check into `orchestrator.run()` or `CompanyRunner`.
+  * Batch status polling (`GET /v1/batches/{id}`) and result retrieval (`/v1/files/{file_id}/content`).
+* [x] **Batch Agent Tool**:
+  * Exposed `submit_batch_job` and `check_batch_status` to agents.
+* [x] **Completion Poller & Turn Injection**:
+  * Periodic batch check integrated into `orchestrator.poll_active_batch_jobs()`.
   * Deliver completions as conversational turns to wake up the requesting agent.
+  * Verified live with `packages/sdk/examples/test_doubleword_batch.ts` (PR #23).
 
 ### Phase 3: Verification & Integration Testing
-* [ ] **Unit & Integration Tests**:
-  * Verify per-agent temperature and model routing.
-  * Verify JSONL creation, batch submission, and polling with Doubleword mock or live key.
-  * Verify downstream consumption via `packages/sdk/examples/`.
+* [x] **Unit & Integration Tests**:
+  * Verified per-agent temperature and model routing (`test_doubleword_engine_routing`, `test_doubleword_payload_and_temperature`).
+  * Verified JSONL creation, batch serde, and output entry parsing (`batch::tests`).
+  * Verified downstream consumption via `packages/sdk/examples/` and TypeScript test suites (Vitest).
