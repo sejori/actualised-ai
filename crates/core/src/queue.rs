@@ -15,6 +15,7 @@ pub struct InferenceRequest {
     pub system_prompt: String,
     pub user_prompt: String,
     pub tools: Vec<Tool>,
+    pub engine_override: Option<Arc<dyn InferenceEngine>>,
 }
 
 #[derive(Debug, Clone)]
@@ -93,7 +94,7 @@ impl InferenceQueue {
                 }
             }
 
-            let engine_clone = Arc::clone(&self.engine);
+            let engine_clone = req.engine_override.clone().unwrap_or_else(|| Arc::clone(&self.engine));
             let sem_clone = Arc::clone(&semaphore);
             let agent_id = req.agent_id.clone();
 

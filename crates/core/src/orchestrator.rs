@@ -27,8 +27,8 @@ fn root_admin_tools() -> Vec<crate::inference::Tool> {
         ("send_message", "Send a message, assign a task, or hand off work to another agent in the company. This will wake them up to process your request.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "message": { "type": "string" } }, "required": ["agent_id", "message"] })),
         ("start_company", "Enable continuous server-side company execution.", json!({ "type": "object", "properties": {} })),
         ("stop_company", "Pause continuous server-side company execution after this cycle.", json!({ "type": "object", "properties": {} })),
-        ("update_inference_settings", "Update the inference provider and model. Existing credentials are preserved.", json!({ "type": "object", "properties": { "provider": { "type": "string", "enum": ["gemini", "openai", "anthropic"] }, "model": { "type": "string" }, "service_tier": { "type": "string" } }, "required": ["provider", "model"] })),
-        ("create_agent", "Create a company agent.", json!({ "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "role": { "type": "string" }, "system_prompt": { "type": "string" }, "parent_id": { "type": ["string", "null"] }, "tools": { "type": "array", "items": { "type": "string" } } }, "required": ["id", "name", "role", "system_prompt", "tools"] })),
+        ("update_inference_settings", "Update the inference provider and model. Existing credentials are preserved.", json!({ "type": "object", "properties": { "provider": { "type": "string", "enum": ["gemini", "openai", "anthropic", "doubleword"] }, "model": { "type": "string" }, "service_tier": { "type": "string" }, "base_url": { "type": "string" } }, "required": ["provider", "model"] })),
+        ("create_agent", "Create a company agent.", json!({ "type": "object", "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "role": { "type": "string" }, "system_prompt": { "type": "string" }, "parent_id": { "type": ["string", "null"] }, "tools": { "type": "array", "items": { "type": "string" } }, "model": { "type": "string" }, "provider": { "type": "string" }, "temperature": { "type": "number" } }, "required": ["id", "name", "role", "system_prompt", "tools"] })),
         ("create_tool", "Create or replace a tool declaration and optionally assign it to the root agent.", json!({ "type": "object", "properties": { "name": { "type": "string" }, "description": { "type": "string" }, "parameters": { "type": "object" }, "assign_to_root": { "type": "boolean" } }, "required": ["name", "description", "parameters"] })),
     ].into_iter().map(|(name, description, parameters)| crate::inference::Tool {
         name: name.to_string(),
@@ -79,6 +79,8 @@ impl Orchestrator {
             model: settings.and_then(|value| value.get("model")).and_then(|value| value.as_str()).unwrap_or_default().to_string(),
             service_tier: settings.and_then(|value| value.get("serviceTier")).and_then(|value| value.as_str()).map(str::to_string),
             api_key: settings.and_then(|value| value.get("apiKey")).and_then(|value| value.as_str()).unwrap_or_default().to_string(),
+            base_url: settings.and_then(|value| value.get("baseUrl")).and_then(|value| value.as_str()).map(str::to_string),
+            temperature: settings.and_then(|value| value.get("temperature")).and_then(|value| value.as_f64()).map(|f| f as f32),
             telegram_bot_token: None,
         });
 
@@ -103,6 +105,33 @@ impl Orchestrator {
 
     pub fn set_tool_executor(&mut self, executor: Arc<dyn ToolExecutor>) {
         self.tool_executor = Some(executor);
+    }
+
+    pub fn engine_for_agent(&self, agent: &crate::state::Agent) -> Arc<dyn InferenceEngine> {
+        if agent.provider.is_none() && agent.model.is_none() && agent.temperature.is_none() {
+            return Arc::clone(&self.inference);
+        }
+
+        let settings = self.state.settings.as_ref();
+        let default_provider = settings.and_then(|v| v.get("provider")).and_then(|v| v.as_str()).unwrap_or("gemini");
+        let default_model = settings.and_then(|v| v.get("model")).and_then(|v| v.as_str()).unwrap_or_default();
+        let default_api_key = settings.and_then(|v| v.get("apiKey")).and_then(|v| v.as_str()).unwrap_or_default();
+        let default_base_url = settings.and_then(|v| v.get("baseUrl")).and_then(|v| v.as_str()).map(str::to_string);
+
+        let provider = agent.provider.as_deref().unwrap_or(default_provider).to_string();
+        let model = agent.model.as_deref().unwrap_or(default_model).to_string();
+        let base_url = default_base_url;
+        let temperature = agent.temperature;
+
+        Arc::from(build_engine(&InferenceConfig {
+            provider,
+            model,
+            service_tier: settings.and_then(|v| v.get("serviceTier")).and_then(|v| v.as_str()).map(str::to_string),
+            api_key: default_api_key.to_string(),
+            base_url,
+            temperature,
+            telegram_bot_token: None,
+        }))
     }
 
     /// Queues an operator message to be appended to an agent's prompt on its next turn.
@@ -200,6 +229,9 @@ impl Orchestrator {
                         if let Some(service_tier) = call.args["service_tier"].as_str() {
                             update["serviceTier"] = serde_json::json!(service_tier);
                         }
+                        if let Some(base_url) = call.args.get("base_url").and_then(|v| v.as_str()) {
+                            update["baseUrl"] = serde_json::json!(base_url);
+                        }
                         self.state.update_company_settings(update).await.map(|_| {
                             let settings = self.state.settings.as_ref();
                             self.set_inference(build_engine(&InferenceConfig {
@@ -207,6 +239,8 @@ impl Orchestrator {
                                 model: model.to_string(),
                                 service_tier: settings.and_then(|value| value.get("serviceTier")).and_then(|value| value.as_str()).map(str::to_string),
                                 api_key: settings.and_then(|value| value.get("apiKey")).and_then(|value| value.as_str()).unwrap_or_default().to_string(),
+                                base_url: settings.and_then(|value| value.get("baseUrl")).and_then(|value| value.as_str()).map(str::to_string),
+                                temperature: settings.and_then(|value| value.get("temperature")).and_then(|value| value.as_f64()).map(|f| f as f32),
                                 telegram_bot_token: None,
                             }));
                             format!("Inference updated to {}/{}", provider, model)
@@ -223,6 +257,9 @@ impl Orchestrator {
                     "parent_id": call.args.get("parent_id").cloned().unwrap_or(serde_json::Value::Null),
                     "system_prompt": call.args["system_prompt"],
                     "tools": call.args["tools"],
+                    "model": call.args.get("model").cloned().unwrap_or(serde_json::Value::Null),
+                    "provider": call.args.get("provider").cloned().unwrap_or(serde_json::Value::Null),
+                    "temperature": call.args.get("temperature").cloned().unwrap_or(serde_json::Value::Null),
                     "company_id": null,
                     "telemetry": null,
                     "scheduled_tasks": null,
@@ -377,11 +414,18 @@ impl Orchestrator {
 {}", final_system_prompt, index_content);
             }
             
+            let engine_override = if agent.provider.is_some() || agent.model.is_some() || agent.temperature.is_some() {
+                Some(self.engine_for_agent(agent))
+            } else {
+                None
+            };
+
             requests.push(InferenceRequest {
                 agent_id: agent.id.clone(),
                 system_prompt: final_system_prompt,
                 user_prompt,
                 tools: defined_tools,
+                engine_override,
             });
         }
 
@@ -583,6 +627,9 @@ mod tests {
             parent_id: parent_id.map(str::to_string),
             system_prompt: "Test".to_string(),
             tools: Vec::new(),
+            model: None,
+            provider: None,
+            temperature: None,
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None,

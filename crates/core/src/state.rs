@@ -67,6 +67,9 @@ pub struct Agent {
     pub parent_id: Option<String>,
     pub system_prompt: String,
     pub tools: Vec<String>,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub temperature: Option<f32>,
     pub telemetry: Option<AgentTelemetry>,
     pub scheduled_tasks: Option<Vec<ScheduledTask>>,
     pub pending_messages: Option<Vec<String>>,
@@ -187,7 +190,7 @@ impl CompanyState {
                     format!("company:{}", target)
                 };
                 db.query(
-                    "SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                    "SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, model ?? NONE AS model, provider ?? NONE AS provider, temperature ?? NONE AS temperature, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, description FROM project WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE type::string(company_id) = type::string($target) OR company_id = null;
@@ -195,7 +198,7 @@ impl CompanyState {
                 ).bind(("target", full_target)).await
             } else {
                 db.query(
-                    "SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
+                    "SELECT record::id(id) AS id, name ?? 'Unnamed Agent' AS name, role ?? 'Agent' AS role, IF type::is_string(parent_id) OR type::is_record(parent_id) THEN string::replace(type::string(parent_id), 'agent:', '') ELSE NONE END AS parent_id, system_prompt ?? '' AS system_prompt, tools ?? [] AS tools, model ?? NONE AS model, provider ?? NONE AS provider, temperature ?? NONE AS temperature, telemetry, scheduled_tasks ?? NONE AS scheduled_tasks, pending_messages ?? NONE AS pending_messages, issue_triggers ?? NONE AS issue_triggers FROM agent;
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
@@ -547,6 +550,9 @@ mod tests {
             parent_id: parent_id.map(|s| s.to_string()),
             system_prompt: "Prompt".to_string(),
             tools: vec![],
+            model: None,
+            provider: None,
+            temperature: None,
             telemetry: None,
             scheduled_tasks: None,
             pending_messages: None, issue_triggers: None, company_id: None,
