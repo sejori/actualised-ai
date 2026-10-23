@@ -197,9 +197,13 @@ impl Company {
 
     #[napi]
     pub async fn configure_inference(&self, config_json: String) -> napi::Result<()> {
-        let config = serde_json::from_str(&config_json)
+        let config_val: serde_json::Value = serde_json::from_str(&config_json)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        self.orchestrator.lock().await.set_inference(build_engine(&config));
+        let config = serde_json::from_value(config_val.clone())
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let mut orch = self.orchestrator.lock().await;
+        orch.set_inference(build_engine(&config));
+        let _ = orch.state.update_company_settings(config_val).await;
         Ok(())
     }
 
@@ -237,6 +241,12 @@ impl Company {
     #[napi]
     pub async fn get_projects(&self) -> napi::Result<String> {
         serde_json::to_string(&self.orchestrator.lock().await.state.projects)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))
+    }
+
+    #[napi]
+    pub async fn get_batch_jobs(&self) -> napi::Result<String> {
+        serde_json::to_string(&self.orchestrator.lock().await.state.batch_jobs)
             .map_err(|e| napi::Error::from_reason(e.to_string()))
     }
 

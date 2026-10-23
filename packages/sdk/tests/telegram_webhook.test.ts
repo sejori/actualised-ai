@@ -4,10 +4,13 @@ import { ActualisedClient } from '../src/index';
 
 describe('Telegram inference flow', () => {
   it('sends a plain-text model response when no structured Telegram call was emitted', async () => {
+    let started = false;
     const client = {
       queueMessage: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
-      getAgentContext: vi.fn(async () => ({ history: [{ role: 'agent', content: 'Hello from the root agent' }] })),
+      start: vi.fn(async () => { started = true; }),
+      getAgentContext: vi.fn(async () => ({
+        history: started ? [{ role: 'agent', content: 'Hello from the root agent' }] : [],
+      })),
     };
     const sendMessage = vi.fn(async () => {});
 
@@ -19,10 +22,13 @@ describe('Telegram inference flow', () => {
   });
 
   it('does not duplicate a structured telegram_notify call', async () => {
+    let started = false;
     const client = {
       queueMessage: vi.fn(async () => {}),
-      start: vi.fn(async () => {}),
-      getAgentContext: vi.fn(async () => ({ history: [{ role: 'agent', content: 'Called tools: telegram_notify' }] })),
+      start: vi.fn(async () => { started = true; }),
+      getAgentContext: vi.fn(async () => ({
+        history: started ? [{ role: 'agent', content: 'Called tools: telegram_notify' }] : [],
+      })),
     };
     const sendMessage = vi.fn(async () => {});
 

@@ -120,6 +120,10 @@ export class ActualisedClient {
     return JSON.parse(await this.company.getProjects());
   }
 
+  async getBatchJobs(): Promise<unknown[]> {
+    return JSON.parse(await this.company.getBatchJobs());
+  }
+
   async getTools(): Promise<unknown[]> {
     return JSON.parse(await this.company.getTools());
   }

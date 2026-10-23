@@ -371,8 +371,11 @@ impl InferenceEngine for OpenAiInferenceEngine {
                         if tc.get("type").and_then(|t| t.as_str()) == Some("function") {
                             if let Some(func) = tc.get("function") {
                                 let name = func.get("name").and_then(|n| n.as_str()).unwrap_or_default().to_string();
-                                let args_str = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("{}");
-                                let args: serde_json::Value = serde_json::from_str(args_str).unwrap_or(json!({}));
+                                let args: serde_json::Value = match func.get("arguments").or_else(|| func.get("parameters")) {
+                                    Some(serde_json::Value::String(s)) => serde_json::from_str(s).unwrap_or(json!({})),
+                                    Some(val @ serde_json::Value::Object(_)) => val.clone(),
+                                    _ => json!({}),
+                                };
                                 let id = tc.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string();
                                 parsed_calls.push(ToolCall { id, name, args });
                             }

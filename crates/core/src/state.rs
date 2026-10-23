@@ -122,6 +122,7 @@ pub struct CompanyState {
     pub projects: Vec<Project>,
     pub tools: Vec<Tool>,
     pub issues: Vec<Issue>,
+    pub batch_jobs: Vec<crate::batch::BatchJobRecord>,
     pub repository: Option<RepositoryConfig>,
     pub company_name: Option<String>,
     pub company_id: Option<String>,
@@ -177,7 +178,9 @@ impl CompanyState {
                     DEFINE TABLE OVERWRITE tool SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
                     REMOVE FIELD IF EXISTS company_id ON tool;
                     DEFINE TABLE OVERWRITE issue SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
-                    REMOVE FIELD IF EXISTS company_id ON issue;"
+                    REMOVE FIELD IF EXISTS company_id ON issue;
+                    DEFINE TABLE OVERWRITE batch_job SCHEMALESS PERMISSIONS FOR select, create, update, delete WHERE $auth.id IN (SELECT VALUE owner FROM company WHERE type::string(id) = type::string($parent.company_id)) OR company_id = null OR company_id = NONE;
+                    REMOVE FIELD IF EXISTS company_id ON batch_job;"
                 ).await?.check()
             }).await?;
         }
@@ -194,6 +197,7 @@ impl CompanyState {
                      SELECT record::id(id) AS id, title, description FROM project WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT name, description, parameters FROM tool WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue WHERE type::string(company_id) = type::string($target) OR company_id = null;
+                     SELECT record::id(id) AS id, requesting_agent_id, input_file_id, output_file_id, error_file_id, status, endpoint, total_requests, completed_requests, failed_requests, destination_path, created_at, completed_at FROM batch_job WHERE type::string(company_id) = type::string($target) OR company_id = null;
                      SELECT record::id(id) AS id, name, settings FROM company WHERE type::string(id) = type::string($target) LIMIT 1"
                 ).bind(("target", full_target)).await
             } else {
@@ -202,6 +206,7 @@ impl CompanyState {
                      SELECT record::id(id) AS id, title, description FROM project;
                      SELECT name, description, parameters FROM tool;
                      SELECT record::id(id) AS id, title, body, state, labels, comments, assignee FROM issue;
+                     SELECT record::id(id) AS id, requesting_agent_id, input_file_id, output_file_id, error_file_id, status, endpoint, total_requests, completed_requests, failed_requests, destination_path, created_at, completed_at FROM batch_job;
                      SELECT record::id(id) AS id, name, settings FROM company LIMIT 1"
                 ).await
             }
@@ -210,7 +215,8 @@ impl CompanyState {
         let projects = response.take::<Vec<Project>>(1).map_err(|e| e.to_string())?;
         let tools = response.take::<Vec<Tool>>(2).map_err(|e| e.to_string())?;
         let issues = response.take::<Vec<Issue>>(3).map_err(|e| e.to_string())?;
-        let company_docs = response.take::<Vec<serde_json::Value>>(4).map_err(|e| e.to_string())?;
+        let batch_jobs = response.take::<Vec<crate::batch::BatchJobRecord>>(4).unwrap_or_default();
+        let company_docs = response.take::<Vec<serde_json::Value>>(5).map_err(|e| e.to_string())?;
         let company_id = company_docs.first().and_then(|d| d.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
         let company_name = company_docs.first().and_then(|d| d.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()));
         let settings = company_docs.first().and_then(|d| d.get("settings").cloned());
@@ -236,6 +242,7 @@ impl CompanyState {
             projects,
             tools,
             issues,
+            batch_jobs,
             repository,
             company_name,
             company_id,
@@ -250,6 +257,7 @@ impl CompanyState {
             projects: Vec::new(),
             tools: Vec::new(),
             issues: Vec::new(),
+            batch_jobs: Vec::new(),
             repository: None,
             company_name: None,
             company_id: None,
@@ -529,11 +537,43 @@ impl CompanyState {
         Ok(())
     }
 
-    // --- Shared Files ---
+    // --- Batch Jobs ---
 
-    
+    pub async fn add_batch_job(&mut self, mut job: crate::batch::BatchJobRecord) -> Result<(), String> {
+        job.company_id = self.company_id.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = record_content(&job)?;
+            let mut _res = self.db
+                .query("CREATE $record CONTENT $job")
+                .bind(("record", RecordId::new("batch_job", job.id.clone())))
+                .bind(("job", content))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
+        }
+        self.batch_jobs.push(job);
+        Ok(())
+    }
 
-    
+    pub async fn update_batch_job(&mut self, mut job: crate::batch::BatchJobRecord) -> Result<(), String> {
+        job.company_id = self.company_id.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let content = record_content(&job)?;
+            let mut _res = self.db
+                .query("UPSERT $record CONTENT $job")
+                .bind(("record", RecordId::new("batch_job", job.id.clone())))
+                .bind(("job", content))
+                .await.map_err(|e| e.to_string())?
+                .check().map_err(|e| e.to_string())?;
+        }
+        if let Some(pos) = self.batch_jobs.iter().position(|j| j.id == job.id) {
+            self.batch_jobs[pos] = job;
+        } else {
+            self.batch_jobs.push(job);
+        }
+        Ok(())
+    }
 }
 
 
