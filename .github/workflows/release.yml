@@ -86,6 +86,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -97,9 +98,12 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: 'https://registry.npmjs.org'
           cache: 'pnpm'
+
+      - name: Ensure modern npm CLI for Trusted Publishing
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
@@ -126,8 +130,13 @@ jobs:
           ls -la
           ls -la dist
 
-      - name: Publish to NPM
+      - name: Publish to NPM via Trusted Publishing (OIDC)
         working-directory: packages/sdk
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: pnpm publish --no-git-checks --access public
+        run: |
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "Publishing using NPM_TOKEN secret fallback..."
+            npm publish --provenance --access public --//registry.npmjs.org/:_authToken="${{ secrets.NPM_TOKEN }}"
+          else
+            echo "Publishing using tokenless OIDC Trusted Publishing..."
+            npm publish --provenance --access public
+          fi

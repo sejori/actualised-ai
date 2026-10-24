@@ -17,11 +17,12 @@
     "actualised_sdk.*.node"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/actualised-ai/actualisedAI.git",
+    "url": "git+https://github.com/sejori/actualised-ai.git",
     "directory": "packages/sdk"
   },
   "napi": {
