@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import type { Company as NativeCompany } from '../native.js';
+import type { Company as NativeCompany } from './native.js';
 
 const { Company } = createRequire(__filename)('../index.js') as { Company: typeof NativeCompany };
 
@@ -172,8 +172,24 @@ export class ActualisedClient {
     await this.company.queueMessage(agentId, message);
   }
 
-  registerToolExecutor(executor: (agentId: string, toolName: string, argsJson: string) => string): void {
-    this.company.registerToolExecutor(executor);
+  registerToolExecutor(
+    executor: (agentId: string, toolName: string, argsJson: string) => string | Promise<string>
+  ): void {
+    if (typeof this.company.registerToolDispatcher === 'function') {
+      this.company.registerToolDispatcher(
+        async (callId: string, agentId: string, toolName: string, argsJson: string) => {
+          try {
+            const result = await Promise.resolve(executor(agentId, toolName, argsJson));
+            const resultStr = typeof result === 'string' ? result : JSON.stringify(result);
+            this.company.completeToolCall(callId, resultStr, null);
+          } catch (err: any) {
+            this.company.completeToolCall(callId, '', err?.message || String(err));
+          }
+        }
+      );
+    } else {
+      this.company.registerToolExecutor(executor as any);
+    }
   }
 
   async start(): Promise<void> {

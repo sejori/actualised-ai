@@ -12,7 +12,7 @@ env:
 
 jobs:
   test:
-    name: Rust Tests
+    name: Rust Core Tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,20 +21,48 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # Faster toolchain setup (no extra apt installs)
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@stable
 
-    # Caches the full target/ dir — the main compile-time win
     - name: Cache Rust build
       uses: Swatinem/rust-cache@v2
       with:
         workspaces: "crates/core -> target"
 
-    # cargo-nextest: parallel test runner, ~2-3x faster than cargo test
     - name: Install cargo-nextest
       uses: taiki-e/install-action@nextest
 
-    # Single step: compiles + runs all tests; --no-fail-fast reports all failures
     - name: Run tests
       run: cargo nextest run --no-fail-fast
+
+  sdk-test:
+    name: SDK Linux Build & Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust build
+      uses: Swatinem/rust-cache@v2
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v3
+      with:
+        version: 8
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: 'pnpm'
+
+    - name: Install dependencies
+      run: pnpm install --no-frozen-lockfile
+
+    - name: Build SDK (Linux Native + TypeScript)
+      run: pnpm --filter @actualised-ai/sdk build
+
+    - name: Run SDK Tests
+      run: pnpm --filter @actualised-ai/sdk test

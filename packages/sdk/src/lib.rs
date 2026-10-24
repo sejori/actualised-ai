@@ -6,25 +6,63 @@ use actualised_core::orchestrator::Orchestrator;
 use actualised_core::memory::MemoryManager;
 use actualised_core::default_company::seed_default_company;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::collections::HashMap;
+use tokio::sync::{Mutex, oneshot};
 
 use async_trait::async_trait;
+
+type ToolResponseMap = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<Result<String, String>>>>>;
 
 #[napi]
 pub struct Company {
     orchestrator: Arc<Mutex<Orchestrator>>,
-    tool_executor: Option<Arc<JsToolExecutor>>,
+    tool_executor: Option<Arc<dyn actualised_core::orchestrator::ToolExecutor>>,
+    pending_tool_calls: ToolResponseMap,
 }
 
-pub struct JsToolExecutor {
+pub struct AsyncJsToolExecutor {
+    tsfn: napi::threadsafe_function::ThreadsafeFunction<(String, String, String, String), napi::threadsafe_function::ErrorStrategy::Fatal>,
+    pending_calls: ToolResponseMap,
+}
+
+#[async_trait]
+impl actualised_core::orchestrator::ToolExecutor for AsyncJsToolExecutor {
+    async fn execute(&self, agent_id: &str, tool_call: &actualised_core::inference::ToolCall) -> Result<String, String> {
+        let args_json = serde_json::to_string(&tool_call.args).unwrap_or_default();
+        let call_id = uuid::Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+
+        {
+            let mut map = self.pending_calls.lock().unwrap();
+            map.insert(call_id.clone(), tx);
+        }
+
+        let status = self.tsfn.call(
+            (call_id.clone(), agent_id.to_string(), tool_call.name.clone(), args_json),
+            napi::threadsafe_function::ThreadsafeFunctionCallMode::NonBlocking,
+        );
+
+        if status != napi::Status::Ok {
+            let mut map = self.pending_calls.lock().unwrap();
+            map.remove(&call_id);
+            return Err(format!("Failed to dispatch tool call to JS: {:?}", status));
+        }
+
+        match rx.await {
+            Ok(res) => res,
+            Err(_) => Err("Tool call cancelled or receiver dropped".to_string()),
+        }
+    }
+}
+
+pub struct SyncJsToolExecutor {
     tsfn: napi::threadsafe_function::ThreadsafeFunction<(String, String, String), napi::threadsafe_function::ErrorStrategy::Fatal>,
 }
 
 #[async_trait]
-impl actualised_core::orchestrator::ToolExecutor for JsToolExecutor {
+impl actualised_core::orchestrator::ToolExecutor for SyncJsToolExecutor {
     async fn execute(&self, agent_id: &str, tool_call: &actualised_core::inference::ToolCall) -> Result<String, String> {
         let args_json = serde_json::to_string(&tool_call.args).unwrap_or_default();
-        
         let res: Result<String, napi::Error> = self.tsfn.call_async((agent_id.to_string(), tool_call.name.clone(), args_json)).await;
         match res {
             Ok(js_str) => Ok(js_str),
@@ -54,6 +92,7 @@ impl Company {
         Ok(Self {
             orchestrator: Arc::new(Mutex::new(Orchestrator::new(state, memory))),
             tool_executor: None,
+            pending_tool_calls: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -71,6 +110,7 @@ impl Company {
         Ok(Self {
             orchestrator: Arc::new(Mutex::new(Orchestrator::new(state, memory))),
             tool_executor: None,
+            pending_tool_calls: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -93,6 +133,7 @@ impl Company {
         Ok(Self {
             orchestrator: Arc::new(Mutex::new(Orchestrator::new(state, memory))),
             tool_executor: None,
+            pending_tool_calls: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -133,7 +174,6 @@ impl Company {
             .map(|s| s.to_string())
     }
 
-
     #[napi]
     pub async fn get_company_name(&self) -> Option<String> {
         self.orchestrator.lock().await.state.company_name.clone()
@@ -165,6 +205,39 @@ impl Company {
             .map_err(napi::Error::from_reason)
     }
 
+    #[napi(ts_args_type = "dispatcher: (callId: string, agentId: string, toolName: string, argsJson: string) => void")]
+    pub fn register_tool_dispatcher(&mut self, dispatcher: napi::JsFunction) -> napi::Result<()> {
+        use napi::threadsafe_function::{ThreadsafeFunction, ErrorStrategy};
+        let tsfn: ThreadsafeFunction<(String, String, String, String), ErrorStrategy::Fatal> = dispatcher.create_threadsafe_function(0, |ctx| {
+            let (call_id, agent_id, tool_name, args_json): (String, String, String, String) = ctx.value;
+            let mut vec = Vec::new();
+            vec.push(ctx.env.create_string(&call_id)?);
+            vec.push(ctx.env.create_string(&agent_id)?);
+            vec.push(ctx.env.create_string(&tool_name)?);
+            vec.push(ctx.env.create_string(&args_json)?);
+            Ok(vec)
+        })?;
+
+        self.tool_executor = Some(Arc::new(AsyncJsToolExecutor {
+            tsfn,
+            pending_calls: Arc::clone(&self.pending_tool_calls),
+        }));
+        Ok(())
+    }
+
+    #[napi]
+    pub fn complete_tool_call(&self, call_id: String, result: String, error: Option<String>) -> napi::Result<()> {
+        let mut map = self.pending_tool_calls.lock().unwrap();
+        if let Some(tx) = map.remove(&call_id) {
+            let res = match error {
+                Some(err) if !err.trim().is_empty() => Err(err),
+                _ => Ok(result),
+            };
+            let _ = tx.send(res);
+        }
+        Ok(())
+    }
+
     #[napi(ts_args_type = "executor: (agentId: string, toolName: string, argsJson: string) => string")]
     pub fn register_tool_executor(&mut self, executor: napi::JsFunction) -> napi::Result<()> {
         use napi::threadsafe_function::{ThreadsafeFunction, ErrorStrategy};
@@ -176,8 +249,8 @@ impl Company {
             vec.push(ctx.env.create_string(&args_json)?);
             Ok(vec)
         })?;
-        
-        self.tool_executor = Some(Arc::new(JsToolExecutor { tsfn }));
+
+        self.tool_executor = Some(Arc::new(SyncJsToolExecutor { tsfn }));
         Ok(())
     }
 
@@ -272,7 +345,19 @@ impl Company {
             .map_err(napi::Error::from_reason)
     }
 
-    
+    #[napi]
+    pub async fn add_shared_file(&self, file_json: String) -> napi::Result<()> {
+        let val: serde_json::Value = serde_json::from_str(&file_json)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        let path = val.get("path").and_then(|v| v.as_str())
+            .ok_or_else(|| napi::Error::from_reason("Missing 'path' field in file_json"))?;
+        let content = val.get("content").and_then(|v| v.as_str())
+            .ok_or_else(|| napi::Error::from_reason("Missing 'content' field in file_json"))?;
+        self.orchestrator.lock().await.memory.write_shared(path, content)
+            .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+        Ok(())
+    }
+
     #[napi]
     pub async fn get_shared_tree(&self) -> napi::Result<String> {
         serde_json::to_string(&self.orchestrator.lock().await.get_shared_tree())
@@ -312,15 +397,13 @@ impl Company {
         let issue: actualised_core::state::Issue = serde_json::from_str(&issue_json)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         let mut orchestrator = self.orchestrator.lock().await;
-        
+
         // Add to db cache
         orchestrator.state.upsert_issue(issue.clone()).await
             .map_err(napi::Error::from_reason)?;
-            
+
         // Assign to the agent's issue_triggers
         if let Some(assignee) = issue.assignee {
-            // Find agent with this email/id
-            // In our system, agent.id is the username/email
             if let Some(mut agent) = orchestrator.state.agents.iter().find(|a| a.id == assignee).cloned() {
                 let triggers = agent.issue_triggers.get_or_insert_with(Vec::new);
                 if !triggers.contains(&issue.id) && issue.state != "closed" {
@@ -332,7 +415,7 @@ impl Company {
                 }
             }
         }
-        
+
         Ok(())
     }
 }
