@@ -149,6 +149,77 @@ impl Orchestrator {
         }
     }
 
+    pub async fn poll_active_batch_jobs(&mut self) {
+        let settings = self.state.settings.as_ref();
+        let api_key = settings.and_then(|v| v.get("apiKey")).and_then(|v| v.as_str().map(|s| s.to_string()))
+            .or_else(|| std::env::var("DOUBLEWORD_API_KEY").ok())
+            .or_else(|| std::env::var("INFERENCE_API_KEY").ok())
+            .unwrap_or_default();
+        let base_url = settings.and_then(|v| v.get("baseUrl")).and_then(|v| v.as_str()).map(str::to_string);
+
+        if api_key.is_empty() {
+            return;
+        }
+
+        let client = crate::batch::DoublewordBatchClient::new(api_key, base_url);
+        let active_jobs: Vec<_> = self.state.batch_jobs.iter()
+            .filter(|j| j.status != "completed" && j.status != "failed" && j.status != "cancelled")
+            .cloned()
+            .collect();
+
+        for mut job in active_jobs {
+            match client.get_batch(&job.id).await {
+                Ok(batch_resp) => {
+                    let status = batch_resp.get("status").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+                    let output_file_id = batch_resp.get("output_file_id").and_then(|v| v.as_str()).map(str::to_string);
+                    let error_file_id = batch_resp.get("error_file_id").and_then(|v| v.as_str()).map(str::to_string);
+
+                    if let Some(req_counts) = batch_resp.get("request_counts") {
+                        job.completed_requests = req_counts.get("completed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                        job.failed_requests = req_counts.get("failed").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                    }
+
+                    job.status = status.clone();
+                    job.output_file_id = output_file_id.clone();
+                    job.error_file_id = error_file_id;
+
+                    if status == "completed" {
+                        job.completed_at = Some(chrono::Utc::now().timestamp());
+                        println!("✅ Batch job {} completed! Downloading results...", job.id);
+
+                        let mut results_summary = String::new();
+                        if let Some(ref out_fid) = output_file_id {
+                            if let Ok(content) = client.get_file_content(out_fid).await {
+                                let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+                                results_summary = format!("Parsed {} output responses.", lines.len());
+
+                                if let Some(ref dest) = job.destination_path {
+                                    let _ = self.memory.write_shared(dest, &content);
+                                }
+                            }
+                        }
+
+                        let notif = format!(
+                            "BATCH JOB NOTIFICATION: Your batch job {} has COMPLETED. {} Completed items: {}/{}. Output ready.",
+                            job.id, results_summary, job.completed_requests, job.total_requests
+                        );
+                        let _ = self.queue_message(&job.requesting_agent_id, notif).await;
+                    } else if status == "failed" || status == "expired" || status == "cancelled" {
+                        job.completed_at = Some(chrono::Utc::now().timestamp());
+                        println!("❌ Batch job {} {}", job.id, status);
+                        let notif = format!("BATCH JOB NOTIFICATION: Your batch job {} ended with status: {}.", job.id, status);
+                        let _ = self.queue_message(&job.requesting_agent_id, notif).await;
+                    }
+
+                    let _ = self.state.update_batch_job(job).await;
+                }
+                Err(e) => {
+                    println!("Failed to poll batch job {}: {}", job.id, e);
+                }
+            }
+        }
+    }
+
     pub fn get_agent_context(&self, agent_id: &str) -> AgentContext {
         let mut context = self.agent_contexts.get(agent_id).cloned().unwrap_or_default();
         context.pending_messages = self.state.agents.iter()
@@ -310,6 +381,9 @@ impl Orchestrator {
     }
 
     pub async fn run(&mut self) -> Result<(), String> {
+        // Poll any active Doubleword batch jobs and inject completions
+        self.poll_active_batch_jobs().await;
+
         println!("Orchestrator staging work to inference queue...");
         let queue = InferenceQueue::new(Arc::clone(&self.inference), self.rate_limit.clone());
         
@@ -323,6 +397,47 @@ impl Orchestrator {
             for t_name in &agent.tools {
                 if let Some(tool) = self.state.tools.iter().find(|t| &t.name == t_name) {
                     defined_tools.push(tool.clone());
+                } else if t_name == "submit_batch_job" {
+                    defined_tools.push(crate::inference::Tool {
+                        name: "submit_batch_job".to_string(),
+                        description: "Submit a bulk asynchronous batch inference job via JSONL to Doubleword.".to_string(),
+                        parameters: serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "description": "List of prompt items to process in batch.",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "custom_id": { "type": "string" },
+                                            "prompt": { "type": "string" },
+                                            "system_prompt": { "type": "string" },
+                                            "temperature": { "type": "number" }
+                                        },
+                                        "required": ["custom_id", "prompt"]
+                                    }
+                                },
+                                "model": { "type": "string" },
+                                "destination_path": { "type": "string" }
+                            },
+                            "required": ["items"]
+                        }),
+                        company_id: None,
+                    });
+                } else if t_name == "check_batch_status" {
+                    defined_tools.push(crate::inference::Tool {
+                        name: "check_batch_status".to_string(),
+                        description: "Check status of a submitted batch job.".to_string(),
+                        parameters: serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "batch_id": { "type": "string" }
+                            },
+                            "required": ["batch_id"]
+                        }),
+                        company_id: None,
+                    });
                 }
             }
             if agent.parent_id.is_none() {
@@ -576,6 +691,101 @@ impl Orchestrator {
                                     #[cfg(target_arch = "wasm32")]
                                     {
                                         let _ = self.queue_message(&agent_id, "GitHub tools are not supported in the WASM sandbox environment.".to_string()).await;
+                                    }
+                                } else if call.name == "submit_batch_job" {
+                                    let items_val = call.args.get("items")
+                                        .or_else(|| call.args.get("requests"))
+                                        .or_else(|| call.args.get("tasks"));
+                                    let items_vec: Option<Vec<serde_json::Value>> = match items_val {
+                                        Some(serde_json::Value::Array(arr)) => Some(arr.clone()),
+                                        Some(serde_json::Value::String(s)) => serde_json::from_str(s).ok(),
+                                        _ => None,
+                                    };
+                                    let dest_path = call.args.get("destination_path").and_then(|v| v.as_str()).map(str::to_string);
+                                    let model_override = call.args.get("model").and_then(|v| v.as_str());
+
+                                    match items_vec {
+                                        Some(items) if !items.is_empty() => {
+                                            let settings = self.state.settings.as_ref();
+                                            let api_key = settings.and_then(|v| v.get("apiKey")).and_then(|v| v.as_str().map(|s| s.to_string()))
+                                                .or_else(|| std::env::var("DOUBLEWORD_API_KEY").ok())
+                                                .or_else(|| std::env::var("INFERENCE_API_KEY").ok())
+                                                .unwrap_or_default();
+                                            let base_url = settings.and_then(|v| v.get("baseUrl")).and_then(|v| v.as_str()).map(str::to_string);
+
+                                            let agent = self.state.agents.iter().find(|a| a.id == agent_id).cloned();
+                                            let default_model = agent.as_ref().and_then(|a| a.model.as_deref())
+                                                .or_else(|| settings.and_then(|v| v.get("model")).and_then(|v| v.as_str()))
+                                                .unwrap_or("deepseek-ai/DeepSeek-V4.1-Flash");
+                                            let target_model = model_override.unwrap_or(default_model);
+
+                                            let client = crate::batch::DoublewordBatchClient::new(api_key, base_url);
+
+                                            let mut jsonl_lines = Vec::new();
+                                            for item in items {
+                                                let custom_id = item.get("custom_id").and_then(|v| v.as_str()).unwrap_or("item");
+                                                let prompt = item.get("prompt").and_then(|v| v.as_str()).unwrap_or_default();
+                                                let sys_prompt = item.get("system_prompt").and_then(|v| v.as_str())
+                                                    .or_else(|| agent.as_ref().map(|a| a.system_prompt.as_str()))
+                                                    .unwrap_or("You are an AI assistant.");
+                                                let temp = item.get("temperature").and_then(|v| v.as_f64()).map(|f| f as f32)
+                                                    .or_else(|| agent.as_ref().and_then(|a| a.temperature));
+
+                                                let line = crate::batch::build_chat_jsonl_line(custom_id, target_model, sys_prompt, prompt, temp);
+                                                jsonl_lines.push(line);
+                                            }
+
+                                            let jsonl_content = jsonl_lines.join("\n");
+                                            let total_count = jsonl_lines.len();
+
+                                            let upload_res = client.upload_batch_jsonl(&jsonl_content, None).await;
+                                            match upload_res {
+                                                Ok(file_id) => {
+                                                    match client.create_batch(&file_id, None).await {
+                                                        Ok(batch_resp) => {
+                                                            let batch_id = batch_resp.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                                                            let job = crate::batch::BatchJobRecord {
+                                                                id: batch_id.clone(),
+                                                                company_id: self.state.company_id.clone(),
+                                                                requesting_agent_id: agent_id.clone(),
+                                                                input_file_id: file_id,
+                                                                output_file_id: None,
+                                                                error_file_id: None,
+                                                                status: "validating".to_string(),
+                                                                endpoint: "/v1/chat/completions".to_string(),
+                                                                total_requests: total_count,
+                                                                completed_requests: 0,
+                                                                failed_requests: 0,
+                                                                destination_path: dest_path,
+                                                                created_at: chrono::Utc::now().timestamp(),
+                                                                completed_at: None,
+                                                            };
+                                                            let _ = self.state.add_batch_job(job).await;
+                                                            let msg = format!("Successfully submitted batch job {} with {} items to Doubleword. Status: validating.", batch_id, total_count);
+                                                            let _ = self.queue_message(&agent_id, msg).await;
+                                                        }
+                                                        Err(e) => {
+                                                            let _ = self.queue_message(&agent_id, format!("Failed to create batch job: {}", e)).await;
+                                                        }
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    let _ = self.queue_message(&agent_id, format!("Failed to upload batch JSONL file: {}", e)).await;
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            println!("Agent {} submit_batch_job rejected args: {}", agent_id, call.args);
+                                            let _ = self.queue_message(&agent_id, format!("submit_batch_job requires non-empty 'items' array, received: {}", call.args)).await;
+                                        }
+                                    }
+                                } else if call.name == "check_batch_status" {
+                                    let batch_id = call.args.get("batch_id").and_then(|v| v.as_str()).unwrap_or_default();
+                                    if let Some(job) = self.state.batch_jobs.iter().find(|j| j.id == batch_id) {
+                                        let msg = format!("Batch job {}: status={}, completed={}/{}", job.id, job.status, job.completed_requests, job.total_requests);
+                                        let _ = self.queue_message(&agent_id, msg).await;
+                                    } else {
+                                        let _ = self.queue_message(&agent_id, format!("Batch job {} not found", batch_id)).await;
                                     }
                                 } else {
                                     if let Some(ref executor) = self.tool_executor {

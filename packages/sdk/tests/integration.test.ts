@@ -37,6 +37,7 @@ describe('Actualised SDK Integration', () => {
       pending_messages: null,
     };
     await client.addAgent(agent);
+    await client.queueMessage('agent_1', 'Please calculate the tax.');
 
     let executedTool = false;
 

@@ -9,3 +9,4 @@ pub mod state;
 pub mod tools;
 pub mod vcs;
 pub mod providers;
+pub mod batch;

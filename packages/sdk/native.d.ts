@@ -21,6 +21,7 @@ export class Company {
   removeAgent(id: string): Promise<void>;
   getAgents(): Promise<string>;
   getProjects(): Promise<string>;
+  getBatchJobs(): Promise<string>;
   addTool(toolJson: string): Promise<void>;
   getTools(): Promise<string>;
   removeTool(name: string): Promise<void>;
