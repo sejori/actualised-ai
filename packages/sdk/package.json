@@ -1,10 +1,31 @@
 {
   "name": "@actualised-ai/sdk",
   "version": "0.1.0",
-  "main": "index.js",
-  "types": "index.d.ts",
+  "description": "SDK for Actualised AI autonomous multi-agent orchestration",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "index.js",
+    "actualised_sdk.*.node"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/actualised-ai/actualisedAI.git",
+    "directory": "packages/sdk"
+  },
   "napi": {
-    "name": "actualised_sdk"
+    "binaryName": "actualised_sdk"
   },
   "devDependencies": {
     "@hono/node-server": "^1.13.0",
@@ -16,8 +37,10 @@
     "vitest": "^5.0.0"
   },
   "scripts": {
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
+    "build:native": "napi build --platform --release",
+    "build:ts": "tsc -p tsconfig.build.json",
+    "build": "napi build --platform --release && tsc -p tsconfig.build.json",
+    "build:debug": "napi build --platform && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   }

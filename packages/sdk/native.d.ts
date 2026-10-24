@@ -30,6 +30,8 @@ export class Company {
   getAgentMemoryTree(agentId: string): Promise<string>;
   getAgentContext(agentId: string): Promise<string>;
   queueMessage(agentId: string, message: string): Promise<void>;
+  registerToolDispatcher(dispatcher: (callId: string, agentId: string, toolName: string, argsJson: string) => void): void;
+  completeToolCall(callId: string, result: string, error?: string | null): void;
   registerToolExecutor(executor: (agentId: string, toolName: string, argsJson: string) => string): void;
   start(): Promise<void>;
   syncIssue(issueJson: string): Promise<void>;
