@@ -20,6 +20,9 @@ export interface Agent {
   parent_id?: string;
   system_prompt: string;
   tools: string[];
+  model?: string;
+  provider?: string;
+  temperature?: number;
 }
 
 export interface Project {

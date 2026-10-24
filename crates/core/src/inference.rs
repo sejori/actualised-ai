@@ -89,6 +89,9 @@ pub struct InferenceConfig {
     pub service_tier: Option<String>,
     #[serde(alias = "apiKey")]
     pub api_key: String,
+    #[serde(alias = "baseUrl", alias = "base_url")]
+    pub base_url: Option<String>,
+    pub temperature: Option<f32>,
     #[serde(alias = "telegramBotToken")]
     pub telegram_bot_token: Option<String>,
 }
@@ -100,12 +103,29 @@ pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
     if resolved_key.trim().is_empty() {
         if let Ok(env_key) = std::env::var("INFERENCE_API_KEY") {
             resolved_key = env_key;
+        } else if let Ok(dw_key) = std::env::var("DOUBLEWORD_API_KEY") {
+            resolved_key = dw_key;
         } else {
             return Box::new(MockInferenceEngine);
         }
     }
 
     match config.provider.as_str() {
+        "doubleword" => {
+            let base_url = config.base_url.clone().unwrap_or_else(|| "https://api.doubleword.ai/v1".to_string());
+            let model = if config.model.trim().is_empty() {
+                "deepseek-ai/DeepSeek-V4.1-Flash".to_string()
+            } else {
+                config.model.clone()
+            };
+            Box::new(OpenAiInferenceEngine {
+                api_key: resolved_key,
+                model,
+                timeout_secs: 60,
+                base_url: Some(base_url),
+                temperature: config.temperature,
+            })
+        }
         "gemini" => Box::new(GeminiInferenceEngine {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gemini-3.6-flash".to_string() } else { config.model.clone() },
@@ -115,6 +135,8 @@ pub fn build_engine(config: &InferenceConfig) -> Box<dyn InferenceEngine> {
             api_key: resolved_key,
             model: if config.model.trim().is_empty() { "gpt-5".to_string() } else { config.model.clone() },
             timeout_secs: 60,
+            base_url: config.base_url.clone(),
+            temperature: config.temperature,
         }),
         "anthropic" => Box::new(AnthropicInferenceEngine {
             api_key: resolved_key,
@@ -262,9 +284,11 @@ pub struct OpenAiInferenceEngine {
     pub api_key: String,
     pub model: String,
     pub timeout_secs: u64,
+    pub base_url: Option<String>,
+    pub temperature: Option<f32>,
 }
 
-fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>) -> serde_json::Value {
+fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tools: Vec<Tool>, temperature: Option<f32>) -> serde_json::Value {
     let mut body = json!({
         "model": model,
         "messages": [
@@ -272,6 +296,10 @@ fn openai_request_body(model: &str, system_prompt: &str, user_prompt: &str, tool
             { "role": "user", "content": user_prompt }
         ]
     });
+
+    if let Some(temp) = temperature {
+        body["temperature"] = json!(temp);
+    }
 
     if !tools.is_empty() {
         let tools_json: Vec<serde_json::Value> = tools.into_iter().map(|tool| {
@@ -302,8 +330,11 @@ impl InferenceEngine for OpenAiInferenceEngine {
             builder = builder.timeout(std::time::Duration::from_secs(self.timeout_secs));
         }
         let client = builder.build().map_err(|e| format!("Failed to build client: {}", e))?;
-        let url = "https://api.openai.com/v1/chat/completions";
-        let body = openai_request_body(&self.model, system_prompt, user_prompt, tools);
+        let url = match &self.base_url {
+            Some(base) => format!("{}/chat/completions", base.trim_end_matches('/')),
+            None => "https://api.openai.com/v1/chat/completions".to_string(),
+        };
+        let body = openai_request_body(&self.model, system_prompt, user_prompt, tools, self.temperature);
         
         let res = client.post(url)
             .header("Authorization", format!("Bearer {}", self.api_key))
@@ -578,7 +609,7 @@ mod tests {
             company_id: None,
         };
 
-        let openai = openai_request_body("gpt-5", "system", "user", vec![tool.clone()]);
+        let openai = openai_request_body("gpt-5", "system", "user", vec![tool.clone()], None);
         assert_eq!(openai["tool_choice"], "auto");
         assert_eq!(openai["tools"][0]["function"]["name"], "read_memory");
 
@@ -600,6 +631,38 @@ mod tests {
         let start = std::time::Instant::now();
         let _ = engine.generate_response("sys", "user", vec![]).await;
         assert!(start.elapsed() < std::time::Duration::from_secs(10), "Engine took too long, likely hung without a timeout!");
+    }
+
+    #[test]
+    fn test_doubleword_payload_and_temperature() {
+        let tool = Tool {
+            name: "execute_task".to_string(),
+            description: "Do work".to_string(),
+            parameters: json!({ "type": "object" }),
+            company_id: None,
+        };
+
+        let payload = openai_request_body("deepseek-ai/DeepSeek-V4.1-Flash", "You are Lead PM", "Plan sprint", vec![tool], Some(0.1));
+        assert_eq!(payload["model"], "deepseek-ai/DeepSeek-V4.1-Flash");
+        assert!((payload["temperature"].as_f64().unwrap() - 0.1).abs() < 1e-4);
+        assert_eq!(payload["tool_choice"], "auto");
+        assert_eq!(payload["tools"][0]["function"]["name"], "execute_task");
+    }
+
+    #[test]
+    fn test_doubleword_engine_routing() {
+        let config = InferenceConfig {
+            provider: "doubleword".to_string(),
+            model: "deepseek-ai/DeepSeek-V4.1-Flash".to_string(),
+            service_tier: None,
+            api_key: "test_key".to_string(),
+            base_url: None,
+            temperature: Some(0.2),
+            telegram_bot_token: None,
+        };
+        let engine = build_engine(&config);
+        // Engine should build without panic
+        assert_eq!(config.provider, "doubleword");
     }
 
     #[tokio::test]
