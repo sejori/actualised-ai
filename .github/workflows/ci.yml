@@ -59,7 +59,7 @@ jobs:
         cache: 'pnpm'
 
     - name: Install dependencies
-      run: pnpm install --frozen-lockfile
+      run: pnpm install
 
     - name: Build SDK (Linux Native + TypeScript)
       run: pnpm --filter @actualised-ai/sdk build
