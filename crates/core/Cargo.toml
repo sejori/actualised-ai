@@ -2,6 +2,14 @@
 name = "actualised-core"
 version = "0.1.0"
 edition = "2021"
+description = "Autonomous multi-agent orchestration engine for AI teams and game studios"
+license = "MIT"
+repository = "https://github.com/sejori/actualised-ai"
+homepage = "https://github.com/sejori/actualised-ai"
+documentation = "https://docs.rs/actualised-core"
+readme = "README.md"
+keywords = ["agents", "orchestration", "multi-agent", "ai", "llm"]
+categories = ["asynchronous", "development-tools"]
 
 [features]
 default = ["local-db"]

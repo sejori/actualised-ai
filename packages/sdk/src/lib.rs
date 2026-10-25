@@ -98,7 +98,7 @@ impl Company {
 
     #[napi]
     pub async fn init_system_client(state_directory: String, db_path: String, company_id: String) -> napi::Result<Self> {
-        let mut state = CompanyState::init(&db_path, None, Some(company_id)).await
+        let state = CompanyState::init(&db_path, None, Some(company_id)).await
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
         let memory = MemoryManager::new(&state_directory)
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;

@@ -6,8 +6,12 @@ on:
       - main
   workflow_dispatch:
     inputs:
-      force_publish:
-        description: 'Force build and publish current version to npm'
+      force_publish_sdk:
+        description: 'Force build and publish current version of SDK to npm'
+        type: boolean
+        default: false
+      force_publish_crate:
+        description: 'Force publish actualised-core crate to crates.io'
         type: boolean
         default: false
 
@@ -21,8 +25,8 @@ jobs:
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
       sdk_released: ${{ steps.release.outputs['packages/sdk--release_created'] }}
-      tag_name: ${{ steps.release.outputs['packages/sdk--tag_name'] }}
-      version: ${{ steps.release.outputs['packages/sdk--version'] }}
+      core_released: ${{ steps.release.outputs['crates/core--release_created'] }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -32,7 +36,7 @@ jobs:
 
   build-native:
     needs: release-please
-    if: ${{ needs.release-please.outputs.releases_created == 'true' || needs.release-please.outputs.sdk_released == 'true' || inputs.force_publish == true }}
+    if: ${{ needs.release-please.outputs.releases_created == 'true' || needs.release-please.outputs.sdk_released == 'true' || inputs.force_publish_sdk == true }}
     strategy:
       matrix:
         include:
@@ -139,4 +143,29 @@ jobs:
           else
             echo "Publishing using tokenless OIDC Trusted Publishing..."
             npm publish --provenance --access public
+          fi
+
+  publish-crate:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' || needs.release-please.outputs.core_released == 'true' || inputs.force_publish_crate == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: crates-io-publish
+
+      - name: Publish actualised-core to crates.io
+        run: |
+          if [ -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
+            echo "Publishing actualised-core to crates.io..."
+            cargo publish --package actualised-core --token "${{ secrets.CARGO_REGISTRY_TOKEN }}"
+          else
+            echo "CARGO_REGISTRY_TOKEN secret is not set, executing cargo publish --dry-run..."
+            cargo publish --package actualised-core --dry-run
           fi

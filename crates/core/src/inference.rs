@@ -442,7 +442,7 @@ impl InferenceEngine for AnthropicInferenceEngine {
         {
             builder = builder.timeout(std::time::Duration::from_secs(self.timeout_secs));
         }
-        let mut request = builder.build().map_err(|e| format!("Failed to build client: {}", e))?
+        let request = builder.build().map_err(|e| format!("Failed to build client: {}", e))?
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -663,7 +663,7 @@ mod tests {
             temperature: Some(0.2),
             telegram_bot_token: None,
         };
-        let engine = build_engine(&config);
+        let _engine = build_engine(&config);
         // Engine should build without panic
         assert_eq!(config.provider, "doubleword");
     }
