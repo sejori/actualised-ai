@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT, ACCEPT}};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use base64::Engine;
 
 use crate::vcs::{VersionControl, IssueTracker, VcsError};
 
@@ -48,7 +49,7 @@ impl VersionControl for GithubProvider {
 
         let content_res: ContentResponse = res.json().await?;
         if content_res.encoding == "base64" {
-            let decoded = base64::decode(content_res.content.replace("\n", ""))
+            let decoded = base64::engine::general_purpose::STANDARD.decode(content_res.content.replace("\n", ""))
                 .map_err(|e| VcsError(e.to_string()))?;
             String::from_utf8(decoded).map_err(|e| VcsError(e.to_string()))
         } else {
@@ -56,15 +57,15 @@ impl VersionControl for GithubProvider {
         }
     }
 
-    async fn write_file(&self, path: &str, content: &str, message: &str) -> Result<(), VcsError> {
+    async fn write_file(&self, _path: &str, _content: &str, _message: &str) -> Result<(), VcsError> {
         Err(VcsError("Not implemented".to_string()))
     }
 
-    async fn list_directory(&self, path: &str) -> Result<Vec<String>, VcsError> {
+    async fn list_directory(&self, _path: &str) -> Result<Vec<String>, VcsError> {
         Err(VcsError("Not implemented".to_string()))
     }
 
-    async fn search_codebase(&self, query: &str) -> Result<Vec<String>, VcsError> {
+    async fn search_codebase(&self, _query: &str) -> Result<Vec<String>, VcsError> {
         Err(VcsError("Not implemented".to_string()))
     }
 }
@@ -72,15 +73,15 @@ impl VersionControl for GithubProvider {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl IssueTracker for GithubProvider {
-    async fn create_issue(&self, title: &str, body: &str, labels: &[String]) -> Result<String, VcsError> {
+    async fn create_issue(&self, _title: &str, _body: &str, _labels: &[String]) -> Result<String, VcsError> {
         Err(VcsError("Not implemented".to_string()))
     }
     
-    async fn add_comment(&self, issue_id: &str, comment: &str) -> Result<(), VcsError> {
+    async fn add_comment(&self, _issue_id: &str, _comment: &str) -> Result<(), VcsError> {
         Err(VcsError("Not implemented".to_string()))
     }
     
-    async fn close_issue(&self, issue_id: &str) -> Result<(), VcsError> {
+    async fn close_issue(&self, _issue_id: &str) -> Result<(), VcsError> {
         Err(VcsError("Not implemented".to_string()))
     }
 }

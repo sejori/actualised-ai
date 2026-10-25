@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, Deserializer};
+use serde::{Deserialize, Serialize};
 use crate::inference::Tool;
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb_types::{RecordId, SurrealValue};
@@ -382,7 +382,7 @@ impl CompanyState {
         Ok(())
     }
 
-    pub async fn update_agent(&mut self, id: &str, mut new_agent: Agent) -> Result<(), String> {
+    pub async fn update_agent(&mut self, id: &str, new_agent: Agent) -> Result<(), String> {
         let target_id = id.replace("agent:", "");
         let mut updates_needed = Vec::new();
         let was_root = self.agents.iter().find(|a| a.id.replace("agent:", "") == target_id).map(|a| a.parent_id.is_none()).unwrap_or(false);

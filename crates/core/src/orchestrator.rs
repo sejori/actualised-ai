@@ -380,6 +380,10 @@ impl Orchestrator {
         Some(result)
     }
 
+    pub async fn run_cycle(&mut self) -> Result<(), String> {
+        self.run().await
+    }
+
     pub async fn run(&mut self) -> Result<(), String> {
         // Poll any active Doubleword batch jobs and inject completions
         self.poll_active_batch_jobs().await;
@@ -790,7 +794,7 @@ impl Orchestrator {
                                 } else {
                                     if let Some(ref executor) = self.tool_executor {
                                         let tool_start = std::time::Instant::now();
-                                        println!("Dispatching custom TS tool {} for Agent {}...", call.name, agent_id);
+                                        println!("Dispatching custom tool {} for Agent {}...", call.name, agent_id);
                                         match executor.execute(&agent_id, call).await {
                                             Ok(res) => {
                                                 println!("✅ Custom tool {} executed (took {:.2}s)", call.name, tool_start.elapsed().as_secs_f64());

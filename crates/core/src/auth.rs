@@ -3,7 +3,7 @@ use serde::Serialize;
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb_types::SurrealValue;
 #[cfg(not(target_arch = "wasm32"))]
-use surrealdb::{engine::any::{connect, Any}, Surreal};
+use surrealdb::engine::any::connect;
 #[cfg(not(target_arch = "wasm32"))]
 use surrealdb::opt::auth::Record;
 

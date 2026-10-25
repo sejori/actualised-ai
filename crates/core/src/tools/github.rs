@@ -73,7 +73,7 @@ impl GithubClient {
             sleep(Duration::from_secs(interval)).await;
         }
     }
-    pub async fn create_commit(&self, token: &str, repo: &str, message: &str, agent_name: &str) -> Result<(), String> {
+    pub async fn create_commit(&self, _token: &str, repo: &str, message: &str, agent_name: &str) -> Result<(), String> {
         let tagged_message = format!("{}\n\n[Agent: {}]", message, agent_name);
         
         // In a real implementation, this would involve creating a tree, a commit object, and updating the ref.
