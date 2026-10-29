@@ -4,7 +4,7 @@ use crate::memory::MemoryManager;
 use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
 use async_trait::async_trait;
 use petgraph::graph::DiGraph;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -20,9 +20,9 @@ const MAX_HISTORY_TURNS: usize = 40;
 fn root_admin_tools() -> Vec<crate::inference::Tool> {
     use serde_json::json;
     [
-        ("inspect_company", "Inspect the company structure, projects, tools, and non-secret inference settings. WARNING: Do NOT call this multiple times. Call it ONCE to gather state, then proceed with your task.", json!({ "type": "object", "properties": {} })),
-        ("read_agent_memory", "Read a memory file belonging to any agent.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "file_name": { "type": "string" } }, "required": ["agent_id", "file_name"] })),
-        ("read_shared_file", "Read a company shared file.", json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] })),
+        ("inspect_company", "Inspect the company structure, team hierarchy (reporting lines and roles), what team members are actively working on (assigned tasks and status), projects, tools, and non-secret inference settings. WARNING: Repeat inspection is disallowed without an intervening action. Call this ONCE to assess state, then proceed with taking an action or assigning a task.", json!({ "type": "object", "properties": {} })),
+        ("read_agent_memory", "Read a memory file belonging to any agent. WARNING: Re-reading the exact same memory file without an intervening action is disallowed.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "file_name": { "type": "string" } }, "required": ["agent_id", "file_name"] })),
+        ("read_shared_file", "Read a company shared file. WARNING: Re-reading the exact same path without an intervening action is disallowed.", json!({ "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] })),
         ("write_shared_file", "Create or update a company shared file.", json!({ "type": "object", "properties": { "path": { "type": "string" }, "content": { "type": "string" } }, "required": ["path", "content"] })),
         ("send_message", "Send a message, assign a task, or hand off work to another agent in the company. This will wake them up to process your request.", json!({ "type": "object", "properties": { "agent_id": { "type": "string" }, "message": { "type": "string" } }, "required": ["agent_id", "message"] })),
         ("start_company", "Enable continuous server-side company execution.", json!({ "type": "object", "properties": {} })),
@@ -61,6 +61,37 @@ impl AgentContext {
     }
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct AgentInspectionTracker {
+    pub inspected_tools: HashSet<String>,
+    pub inspected_memories: HashSet<(String, String)>,
+    pub inspected_shared_files: HashSet<String>,
+}
+
+impl AgentInspectionTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn reset(&mut self) {
+        self.inspected_tools.clear();
+        self.inspected_memories.clear();
+        self.inspected_shared_files.clear();
+    }
+}
+
+pub fn is_read_tool(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("read")
+        || lower.starts_with("inspect")
+        || lower.starts_with("get")
+        || lower.starts_with("check")
+        || lower.starts_with("search")
+        || lower.starts_with("find")
+        || lower.starts_with("query")
+        || lower.starts_with("list")
+}
+
 pub struct Orchestrator {
     pub state: CompanyState,
     pub task_graph: DiGraph<String, ()>,
@@ -69,6 +100,7 @@ pub struct Orchestrator {
     pub rate_limit: RateLimitConfig,
     pub agent_contexts: HashMap<String, AgentContext>,
     pub tool_executor: Option<Arc<dyn ToolExecutor>>,
+    pub inspection_trackers: HashMap<String, AgentInspectionTracker>,
 }
 
 impl Orchestrator {
@@ -92,7 +124,18 @@ impl Orchestrator {
             rate_limit: RateLimitConfig::default(),
             agent_contexts: HashMap::new(),
             tool_executor: None,
+            inspection_trackers: HashMap::new(),
         }
+    }
+
+    pub fn reset_inspection_tracker(&mut self, agent_id: &str) {
+        if let Some(tracker) = self.inspection_trackers.get_mut(agent_id) {
+            tracker.reset();
+        }
+    }
+
+    pub fn get_inspection_tracker(&self, agent_id: &str) -> Option<&AgentInspectionTracker> {
+        self.inspection_trackers.get(agent_id)
     }
 
     pub fn set_inference(&mut self, engine: Box<dyn InferenceEngine>) {
@@ -248,6 +291,12 @@ impl Orchestrator {
 
         let result = match call.name.as_str() {
             "inspect_company" => {
+                let tracker = self.inspection_trackers.entry(agent_id.to_string()).or_default();
+                if tracker.inspected_tools.contains("inspect_company") {
+                    return Some(Err("Repeat inspection of 'inspect_company' is disallowed without an intervening action. You have already inspected the company state; proceed with taking an action or assigning a task.".to_string()));
+                }
+                tracker.inspected_tools.insert("inspect_company".to_string());
+
                 let settings = self.state.settings.as_ref();
                 serde_json::to_string(&serde_json::json!({
                     "name": self.state.company_name,
@@ -265,36 +314,76 @@ impl Orchestrator {
             "read_agent_memory" => {
                 let target = call.args["agent_id"].as_str().ok_or_else(|| "agent_id is required".to_string());
                 let file_name = call.args["file_name"].as_str().ok_or_else(|| "file_name is required".to_string());
-                target.and_then(|target| file_name.and_then(|file_name| self.memory.read_memory(target, file_name)))
+                match (target, file_name) {
+                    (Ok(target), Ok(file_name)) => {
+                        let tracker = self.inspection_trackers.entry(agent_id.to_string()).or_default();
+                        let key = (target.to_string(), file_name.to_string());
+                        if tracker.inspected_memories.contains(&key) {
+                            return Some(Err(format!(
+                                "Repeat inspection of memory '{}/{}' is disallowed without an intervening action. You have already read this memory file; proceed with taking an action or assigning a task.",
+                                target, file_name
+                            )));
+                        }
+                        tracker.inspected_memories.insert(key);
+                        self.memory.read_memory(target, file_name)
+                    }
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                }
             }
-            "read_shared_file" => call.args["path"].as_str()
-                .ok_or_else(|| "path is required".to_string())
-                .and_then(|path| self.memory.read_shared(path)),
+            "read_shared_file" => {
+                let path = call.args["path"].as_str().ok_or_else(|| "path is required".to_string());
+                match path {
+                    Ok(path) => {
+                        let tracker = self.inspection_trackers.entry(agent_id.to_string()).or_default();
+                        if tracker.inspected_shared_files.contains(path) {
+                            return Some(Err(format!(
+                                "Repeat inspection of shared file '{}' is disallowed without an intervening action. You have already read this file; proceed with taking an action or assigning a task.",
+                                path
+                            )));
+                        }
+                        tracker.inspected_shared_files.insert(path.to_string());
+                        self.memory.read_shared(path)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             "write_shared_file" => {
                 let path = call.args["path"].as_str().ok_or_else(|| "path is required".to_string());
                 let content = call.args["content"].as_str().ok_or_else(|| "content is required".to_string());
-                path.and_then(|path| content.and_then(|content| self.memory.write_shared(path, content).map_err(|error| error.to_string()).map(|_| format!("Updated shared file {}", path))))
+                let res = path.and_then(|path| content.and_then(|content| self.memory.write_shared(path, content).map_err(|error| error.to_string()).map(|_| format!("Updated shared file {}", path))));
+                if res.is_ok() {
+                    self.reset_inspection_tracker(agent_id);
+                }
+                res
             }
             "send_message" => {
                 let target_id = call.args["agent_id"].as_str().ok_or_else(|| "agent_id is required".to_string());
                 let message = call.args["message"].as_str().ok_or_else(|| "message is required".to_string());
-                match (target_id, message) {
+                let res = match (target_id, message) {
                     (Ok(target), Ok(msg)) => {
                         let final_msg = format!("Message from root agent {}: {}", agent_id, msg);
                         self.queue_message(target, final_msg).await.map(|_| format!("Message successfully sent to {}. They will process it on their next turn.", target))
                     }
                     (Err(e), _) | (_, Err(e)) => Err(e),
+                };
+                if res.is_ok() {
+                    self.reset_inspection_tracker(agent_id);
                 }
+                res
             }
             "start_company" | "stop_company" => {
                 let enabled = call.name == "start_company";
-                self.state.update_company_settings(serde_json::json!({ "executionEnabled": enabled })).await
-                    .map(|_| if enabled { "Company execution enabled" } else { "Company execution paused" }.to_string())
+                let res = self.state.update_company_settings(serde_json::json!({ "executionEnabled": enabled })).await
+                    .map(|_| if enabled { "Company execution enabled" } else { "Company execution paused" }.to_string());
+                if res.is_ok() {
+                    self.reset_inspection_tracker(agent_id);
+                }
+                res
             }
             "update_inference_settings" => {
                 let provider = call.args["provider"].as_str().ok_or_else(|| "provider is required".to_string());
                 let model = call.args["model"].as_str().ok_or_else(|| "model is required".to_string());
-                match (provider, model) {
+                let res = match (provider, model) {
                     (Ok(provider), Ok(model)) => {
                         let mut update = serde_json::json!({ "provider": provider, "model": model });
                         if let Some(service_tier) = call.args["service_tier"].as_str() {
@@ -318,7 +407,11 @@ impl Orchestrator {
                         })
                     }
                     (Err(error), _) | (_, Err(error)) => Err(error),
+                };
+                if res.is_ok() {
+                    self.reset_inspection_tracker(agent_id);
                 }
+                res
             }
             "create_agent" => {
                 let agent = serde_json::from_value::<crate::state::Agent>(serde_json::json!({
@@ -337,13 +430,17 @@ impl Orchestrator {
                     "pending_messages": null,
                     "issue_triggers": null
                 })).map_err(|error| error.to_string());
-                match agent {
+                let res = match agent {
                     Ok(agent) => {
                         let name = agent.name.clone();
                         self.state.add_agent(agent).await.map(|_| format!("Created agent {}", name))
                     }
                     Err(error) => Err(error),
+                };
+                if res.is_ok() {
+                    self.reset_inspection_tracker(agent_id);
                 }
+                res
             }
             "create_tool" => {
                 let tool = serde_json::from_value::<crate::inference::Tool>(serde_json::json!({
@@ -352,7 +449,7 @@ impl Orchestrator {
                     "parameters": call.args["parameters"],
                     "company_id": null
                 })).map_err(|error| error.to_string());
-                match tool {
+                let res = match tool {
                     Ok(tool) => {
                         let name = tool.name.clone();
                         let mutation = if self.state.tools.iter().any(|existing| existing.name == name) {
@@ -373,7 +470,11 @@ impl Orchestrator {
                         mutation.map(|_| format!("Created tool {}", name))
                     }
                     Err(error) => Err(error),
+                };
+                if res.is_ok() {
+                    self.reset_inspection_tracker(agent_id);
                 }
+                res
             }
             _ => unreachable!(),
         };
@@ -525,6 +626,8 @@ impl Orchestrator {
 
             let mut final_system_prompt = agent.system_prompt.clone();
             
+            final_system_prompt.push_str("\n\n=== Tool Usage & Anti-Loop Rules ===\nInspection tools (such as 'inspect_company', 'read_agent_memory', 'read_shared_file', and 'read_memory') cannot be called repeatedly without an intervening action call. You may inspect company state or read a memory/shared file once, but you must take a concrete action (e.g. 'send_message', 'write_shared_file', 'create_agent', 'create_tool', or another action tool) before calling the same inspection tool again. Repeat inspections without an intervening action will be rejected.");
+
             // INJECT MEMORY INDEX for long-term retention & caching efficiency
             if let Ok(index_content) = self.memory.read_memory(&agent.id, "index.md") {
                 final_system_prompt = format!("{}
@@ -602,6 +705,7 @@ impl Orchestrator {
                                         println!("Failed to create project: {}", e);
                                     } else {
                                         println!("Successfully created sub-project: {}", title);
+                                        self.reset_inspection_tracker(&agent_id);
                                     }
                                 } else if call.name == "write_memory" {
                                     let file_name = call.args["file_name"].as_str().unwrap_or("output.txt");
@@ -610,12 +714,20 @@ impl Orchestrator {
                                         println!("Failed to write memory: {}", e);
                                     } else {
                                         println!("Successfully wrote memory file: {}", file_name);
+                                        self.reset_inspection_tracker(&agent_id);
                                     }
                                 } else if call.name == "read_memory" {
                                     let file_name = call.args["file_name"].as_str().unwrap_or("index.md");
-                                    let msg = match self.memory.read_memory(&agent_id, file_name) {
-                                        Ok(content) => format!("Memory file {} content:\n{}", file_name, content),
-                                        Err(e) => format!("Failed to read memory file: {}", e)
+                                    let tracker = self.inspection_trackers.entry(agent_id.clone()).or_default();
+                                    let key = (agent_id.clone(), file_name.to_string());
+                                    let msg = if tracker.inspected_memories.contains(&key) {
+                                        format!("Repeat inspection of memory '{}/{}' is disallowed without an intervening action. You have already read this memory file; proceed with taking an action or assigning a task.", agent_id, file_name)
+                                    } else {
+                                        tracker.inspected_memories.insert(key);
+                                        match self.memory.read_memory(&agent_id, file_name) {
+                                            Ok(content) => format!("Memory file {} content:\n{}", file_name, content),
+                                            Err(e) => format!("Failed to read memory file: {}", e)
+                                        }
                                     };
                                     let _ = self.queue_message(&agent_id, msg).await;
                                 } else if call.name == "telegram_notify" {
@@ -643,7 +755,10 @@ impl Orchestrator {
 
                                         let dispatcher = crate::tools::notifications::NotificationDispatcher::new(telegram_token, chat_id);
                                         let msg = match dispatcher.send_notification(message).await {
-                                            Ok(_) => "Successfully sent telegram notification.".to_string(),
+                                            Ok(_) => {
+                                                self.reset_inspection_tracker(&agent_id);
+                                                "Successfully sent telegram notification.".to_string()
+                                            },
                                             Err(e) => format!("Failed to send telegram notification: {}", e)
                                         };
                                         let _ = self.queue_message(&agent_id, msg).await;
@@ -670,7 +785,10 @@ impl Orchestrator {
                                                     let content = call.args["content"].as_str().unwrap_or_default();
                                                     let message = call.args["message"].as_str().unwrap_or_default();
                                                     let msg = match gh.write_file(path, content, message).await {
-                                                        Ok(_) => format!("Successfully wrote to {} and committed.", path),
+                                                        Ok(_) => {
+                                                            self.reset_inspection_tracker(&agent_id);
+                                                            format!("Successfully wrote to {} and committed.", path)
+                                                        },
                                                         Err(e) => format!("Failed to write file: {}", e)
                                                     };
                                                     let _ = self.queue_message(&agent_id, msg).await;
@@ -678,7 +796,10 @@ impl Orchestrator {
                                                     let issue_id = call.args["issue_id"].as_str().unwrap_or_default();
                                                     let comment = call.args["comment"].as_str().unwrap_or_default();
                                                     let msg = match gh.add_comment(issue_id, comment).await {
-                                                        Ok(_) => format!("Successfully commented on issue {}.", issue_id),
+                                                        Ok(_) => {
+                                                            self.reset_inspection_tracker(&agent_id);
+                                                            format!("Successfully commented on issue {}.", issue_id)
+                                                        },
                                                         Err(e) => format!("Failed to comment: {}", e)
                                                     };
                                                     let _ = self.queue_message(&agent_id, msg).await;
@@ -765,6 +886,7 @@ impl Orchestrator {
                                                                 completed_at: None,
                                                             };
                                                             let _ = self.state.add_batch_job(job).await;
+                                                            self.reset_inspection_tracker(&agent_id);
                                                             let msg = format!("Successfully submitted batch job {} with {} items to Doubleword. Status: validating.", batch_id, total_count);
                                                             let _ = self.queue_message(&agent_id, msg).await;
                                                         }
@@ -798,6 +920,9 @@ impl Orchestrator {
                                         match executor.execute(&agent_id, call).await {
                                             Ok(res) => {
                                                 println!("✅ Custom tool {} executed (took {:.2}s)", call.name, tool_start.elapsed().as_secs_f64());
+                                                if !is_read_tool(&call.name) {
+                                                    self.reset_inspection_tracker(&agent_id);
+                                                }
                                                 let _ = self.queue_message(&agent_id, res).await;
                                             },
                                             Err(e) => println!("❌ Custom tool {} failed (took {:.2}s): {}", call.name, tool_start.elapsed().as_secs_f64(), e),
@@ -957,5 +1082,162 @@ mod tests {
 
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert!(orchestrator.agent_contexts.get("root").unwrap().history.iter().any(|turn| turn.content == "configured response"));
+    }
+
+    #[tokio::test]
+    async fn repeat_inspect_company_is_rejected_until_action_call() {
+        let mut orchestrator = orchestrator().await;
+
+        // 1. First inspection succeeds
+        let first = orchestrator.execute_root_admin_tool("root", &call("inspect_company", json!({}))).await.unwrap();
+        assert!(first.is_ok());
+
+        // 2. Repeat inspection without intervening action is rejected
+        let repeated = orchestrator.execute_root_admin_tool("root", &call("inspect_company", json!({}))).await.unwrap();
+        assert!(repeated.is_err());
+        assert_eq!(
+            repeated.unwrap_err(),
+            "Repeat inspection of 'inspect_company' is disallowed without an intervening action. You have already inspected the company state; proceed with taking an action or assigning a task."
+        );
+
+        // 3. Intervening action call (e.g., send_message)
+        let action = orchestrator.execute_root_admin_tool("root", &call("send_message", json!({
+            "agent_id": "child",
+            "message": "Continue with task"
+        }))).await.unwrap();
+        assert!(action.is_ok());
+
+        // 4. Inspection now succeeds again
+        let after_action = orchestrator.execute_root_admin_tool("root", &call("inspect_company", json!({}))).await.unwrap();
+        assert!(after_action.is_ok());
+    }
+
+    #[tokio::test]
+    async fn repeat_read_agent_memory_is_rejected_until_action_call() {
+        let mut orchestrator = orchestrator().await;
+        orchestrator.memory.write_memory("child", "notes.md", "notes content").unwrap();
+        orchestrator.memory.write_memory("child", "todo.md", "todo content").unwrap();
+
+        // 1. First read of notes.md succeeds
+        let read1 = orchestrator.execute_root_admin_tool("root", &call("read_agent_memory", json!({
+            "agent_id": "child",
+            "file_name": "notes.md"
+        }))).await.unwrap();
+        assert_eq!(read1.unwrap(), "notes content");
+
+        // 2. Reading a different memory file (todo.md) succeeds
+        let read_other = orchestrator.execute_root_admin_tool("root", &call("read_agent_memory", json!({
+            "agent_id": "child",
+            "file_name": "todo.md"
+        }))).await.unwrap();
+        assert_eq!(read_other.unwrap(), "todo content");
+
+        // 3. Repeat read of exact same memory file (child, notes.md) without intervening action is rejected
+        let repeat_read = orchestrator.execute_root_admin_tool("root", &call("read_agent_memory", json!({
+            "agent_id": "child",
+            "file_name": "notes.md"
+        }))).await.unwrap();
+        assert!(repeat_read.is_err());
+        assert_eq!(
+            repeat_read.unwrap_err(),
+            "Repeat inspection of memory 'child/notes.md' is disallowed without an intervening action. You have already read this memory file; proceed with taking an action or assigning a task."
+        );
+
+        // 4. Intervening action (e.g. write_shared_file)
+        let action = orchestrator.execute_root_admin_tool("root", &call("write_shared_file", json!({
+            "path": "specs/shared.md",
+            "content": "new shared content"
+        }))).await.unwrap();
+        assert!(action.is_ok());
+
+        // 5. Reading notes.md succeeds again
+        let read_after_action = orchestrator.execute_root_admin_tool("root", &call("read_agent_memory", json!({
+            "agent_id": "child",
+            "file_name": "notes.md"
+        }))).await.unwrap();
+        assert_eq!(read_after_action.unwrap(), "notes content");
+    }
+
+    #[tokio::test]
+    async fn repeat_read_shared_file_is_rejected_until_action_call() {
+        let mut orchestrator = orchestrator().await;
+        orchestrator.memory.write_shared("plans/roadmap.md", "initial roadmap").unwrap();
+        orchestrator.memory.write_shared("plans/architecture.md", "architecture doc").unwrap();
+
+        // 1. First read succeeds
+        let read1 = orchestrator.execute_root_admin_tool("root", &call("read_shared_file", json!({
+            "path": "plans/roadmap.md"
+        }))).await.unwrap();
+        assert_eq!(read1.unwrap(), "initial roadmap");
+
+        // 2. Reading another shared file succeeds
+        let read2 = orchestrator.execute_root_admin_tool("root", &call("read_shared_file", json!({
+            "path": "plans/architecture.md"
+        }))).await.unwrap();
+        assert_eq!(read2.unwrap(), "architecture doc");
+
+        // 3. Re-reading exact same path is rejected
+        let repeat = orchestrator.execute_root_admin_tool("root", &call("read_shared_file", json!({
+            "path": "plans/roadmap.md"
+        }))).await.unwrap();
+        assert!(repeat.is_err());
+        assert_eq!(
+            repeat.unwrap_err(),
+            "Repeat inspection of shared file 'plans/roadmap.md' is disallowed without an intervening action. You have already read this file; proceed with taking an action or assigning a task."
+        );
+
+        // 4. Action resets inspection tracker (e.g., start_company)
+        let action = orchestrator.execute_root_admin_tool("root", &call("start_company", json!({}))).await.unwrap();
+        assert!(action.is_ok());
+
+        // 5. Re-reading succeeds after action
+        let read_after = orchestrator.execute_root_admin_tool("root", &call("read_shared_file", json!({
+            "path": "plans/roadmap.md"
+        }))).await.unwrap();
+        assert_eq!(read_after.unwrap(), "initial roadmap");
+    }
+
+    struct MockCustomExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for MockCustomExecutor {
+        async fn execute(&self, _agent_id: &str, tool_call: &ToolCall) -> Result<String, String> {
+            Ok(format!("Executed {}", tool_call.name))
+        }
+    }
+
+    #[tokio::test]
+    async fn tool_executor_action_tool_resets_inspection_tracker() {
+        let mut orchestrator = orchestrator().await;
+        orchestrator.set_tool_executor(Arc::new(MockCustomExecutor));
+
+        // Root inspects company
+        let first = orchestrator.execute_root_admin_tool("root", &call("inspect_company", json!({}))).await.unwrap();
+        assert!(first.is_ok());
+        assert!(orchestrator.inspection_trackers.get("root").unwrap().inspected_tools.contains("inspect_company"));
+
+        // Reset inspection tracker for root
+        orchestrator.reset_inspection_tracker("root");
+        assert!(!orchestrator.inspection_trackers.get("root").unwrap().inspected_tools.contains("inspect_company"));
+    }
+
+    #[tokio::test]
+    async fn is_read_tool_correctly_classifies_tool_names() {
+        assert!(is_read_tool("read_shared_file"));
+        assert!(is_read_tool("read_agent_memory"));
+        assert!(is_read_tool("read_memory"));
+        assert!(is_read_tool("inspect_company"));
+        assert!(is_read_tool("get_status"));
+        assert!(is_read_tool("check_health"));
+        assert!(is_read_tool("search_docs"));
+        assert!(is_read_tool("find_symbol"));
+        assert!(is_read_tool("query_database"));
+        assert!(is_read_tool("list_files"));
+
+        assert!(!is_read_tool("send_message"));
+        assert!(!is_read_tool("write_shared_file"));
+        assert!(!is_read_tool("create_agent"));
+        assert!(!is_read_tool("compile_code"));
+        assert!(!is_read_tool("deploy_service"));
     }
 }
