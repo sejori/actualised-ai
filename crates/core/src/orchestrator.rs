@@ -80,18 +80,6 @@ impl AgentInspectionTracker {
     }
 }
 
-pub fn is_read_tool(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower.starts_with("read")
-        || lower.starts_with("inspect")
-        || lower.starts_with("get")
-        || lower.starts_with("check")
-        || lower.starts_with("search")
-        || lower.starts_with("find")
-        || lower.starts_with("query")
-        || lower.starts_with("list")
-}
-
 pub struct Orchestrator {
     pub state: CompanyState,
     pub task_graph: DiGraph<String, ()>,
@@ -920,9 +908,6 @@ impl Orchestrator {
                                         match executor.execute(&agent_id, call).await {
                                             Ok(res) => {
                                                 println!("✅ Custom tool {} executed (took {:.2}s)", call.name, tool_start.elapsed().as_secs_f64());
-                                                if !is_read_tool(&call.name) {
-                                                    self.reset_inspection_tracker(&agent_id);
-                                                }
                                                 let _ = self.queue_message(&agent_id, res).await;
                                             },
                                             Err(e) => println!("❌ Custom tool {} failed (took {:.2}s): {}", call.name, tool_start.elapsed().as_secs_f64(), e),
@@ -1219,25 +1204,5 @@ mod tests {
         // Reset inspection tracker for root
         orchestrator.reset_inspection_tracker("root");
         assert!(!orchestrator.inspection_trackers.get("root").unwrap().inspected_tools.contains("inspect_company"));
-    }
-
-    #[tokio::test]
-    async fn is_read_tool_correctly_classifies_tool_names() {
-        assert!(is_read_tool("read_shared_file"));
-        assert!(is_read_tool("read_agent_memory"));
-        assert!(is_read_tool("read_memory"));
-        assert!(is_read_tool("inspect_company"));
-        assert!(is_read_tool("get_status"));
-        assert!(is_read_tool("check_health"));
-        assert!(is_read_tool("search_docs"));
-        assert!(is_read_tool("find_symbol"));
-        assert!(is_read_tool("query_database"));
-        assert!(is_read_tool("list_files"));
-
-        assert!(!is_read_tool("send_message"));
-        assert!(!is_read_tool("write_shared_file"));
-        assert!(!is_read_tool("create_agent"));
-        assert!(!is_read_tool("compile_code"));
-        assert!(!is_read_tool("deploy_service"));
     }
 }
