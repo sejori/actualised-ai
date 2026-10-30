@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2](https://github.com/sejori/actualised-ai/compare/actualised-core-v0.1.1...actualised-core-v0.1.2) (2026-10-30)
+
+
+### Features
+
+* **core:** inspection tool rate-limiting and anti-loop guards ([f9dd48b](https://github.com/sejori/actualised-ai/commit/f9dd48b56deb6478aa969fb1e580b905928c25fc))
+* **vcs:** implement autonomous DAG stages, refactor barrier locks, and sub-agent git merge workflow (v0.1.2) ([e025911](https://github.com/sejori/actualised-ai/commit/e025911afa0c63643a02366a05c086a3670670f0))
+* **vcs:** introduce extensible WorkspaceProvider with LocalGitWorkspaceProvider and canonical path normalization ([#31](https://github.com/sejori/actualised-ai/issues/31)) ([ba79648](https://github.com/sejori/actualised-ai/commit/ba79648abb87daefa86e1e321f97d2c76b3833f1))
+
 ## [0.1.1](https://github.com/sejori/actualised-ai/compare/actualised-core-v0.1.0...actualised-core-v0.1.1) (2026-10-25)
 
 
