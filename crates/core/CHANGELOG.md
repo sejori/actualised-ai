@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/sejori/actualised-ai/compare/actualised-core-v0.1.2...actualised-core-v0.1.3) (2026-10-30)
+
+
+### Features
+
+* **vcs:** add file_exists to WorkspaceProvider and document release-please workflow ([#32](https://github.com/sejori/actualised-ai/issues/32)) ([9f39a15](https://github.com/sejori/actualised-ai/commit/9f39a15f8ec52e44ba87e20c196c4e6608ed39f5))
+
 ## [0.1.2](https://github.com/sejori/actualised-ai/compare/actualised-core-v0.1.1...actualised-core-v0.1.2) (2026-10-30)
 
 

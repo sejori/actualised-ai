@@ -1,6 +1,6 @@
 [package]
 name = "actualised-core"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "Autonomous multi-agent orchestration engine for AI teams and game studios"
 license = "MIT"
