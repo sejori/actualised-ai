@@ -10,3 +10,7 @@ pub mod tools;
 pub mod vcs;
 pub mod providers;
 pub mod batch;
+
+pub use vcs::{normalize_canonical_path, WorkspaceProvider};
+#[cfg(not(target_arch = "wasm32"))]
+pub use vcs::LocalGitWorkspaceProvider;
