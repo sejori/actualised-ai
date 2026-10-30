@@ -100,8 +100,12 @@ impl MemoryManager {
     }
 
     pub fn read_memory(&self, agent_id: &str, file_name: &str) -> Result<String, String> {
+        let clean = crate::vcs::normalize_canonical_path(file_name);
         let memories = self.memories.lock().unwrap();
         if let Some(agent_memories) = memories.get(agent_id) {
+            if let Some(content) = agent_memories.get(&clean) {
+                return Ok(content.clone());
+            }
             if let Some(content) = agent_memories.get(file_name) {
                 return Ok(content.clone());
             }
@@ -110,21 +114,22 @@ impl MemoryManager {
     }
 
     pub fn write_memory(&self, agent_id: &str, file_name: &str, content: &str) -> std::io::Result<()> {
+        let clean = crate::vcs::normalize_canonical_path(file_name);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let memories_dir = self.base_dir.join(agent_id).join("memories");
-            if let Some(parent) = Path::new(file_name).parent().filter(|p| !p.as_os_str().is_empty()) {
+            if let Some(parent) = Path::new(&clean).parent().filter(|p| !p.as_os_str().is_empty()) {
                 std::fs::create_dir_all(memories_dir.join(parent))?;
             }
-            std::fs::write(memories_dir.join(file_name), content)?;
+            std::fs::write(memories_dir.join(&clean), content)?;
         }
 
-        self.memories
-            .lock()
-            .unwrap()
-            .entry(agent_id.to_string())
-            .or_default()
-            .insert(file_name.to_string(), content.to_string());
+        let mut memories = self.memories.lock().unwrap();
+        let agent_map = memories.entry(agent_id.to_string()).or_default();
+        agent_map.insert(clean.clone(), content.to_string());
+        if clean != file_name {
+            agent_map.insert(file_name.to_string(), content.to_string());
+        }
 
         Ok(())
     }
@@ -150,28 +155,36 @@ impl MemoryManager {
 
     /// Writes to the shared team directory, visible to every agent.
     pub fn write_shared(&self, path: &str, content: &str) -> std::io::Result<()> {
+        let clean = crate::vcs::normalize_canonical_path(path);
         #[cfg(not(target_arch = "wasm32"))]
         {
             let shared_dir = self.base_dir.join("_shared");
-            if let Some(parent) = Path::new(path).parent().filter(|p| !p.as_os_str().is_empty()) {
+            if let Some(parent) = Path::new(&clean).parent().filter(|p| !p.as_os_str().is_empty()) {
                 std::fs::create_dir_all(shared_dir.join(parent))?;
             } else {
                 std::fs::create_dir_all(&shared_dir)?;
             }
-            std::fs::write(shared_dir.join(path), content)?;
+            std::fs::write(shared_dir.join(&clean), content)?;
         }
 
-        self.shared.lock().unwrap().insert(path.to_string(), content.to_string());
+        let mut shared = self.shared.lock().unwrap();
+        shared.insert(clean.clone(), content.to_string());
+        if clean != path {
+            shared.insert(path.to_string(), content.to_string());
+        }
         Ok(())
     }
 
     pub fn read_shared(&self, path: &str) -> Result<String, String> {
-        self.shared
-            .lock()
-            .unwrap()
-            .get(path)
-            .cloned()
-            .ok_or_else(|| format!("Shared file {} not found", path))
+        let clean = crate::vcs::normalize_canonical_path(path);
+        let shared = self.shared.lock().unwrap();
+        if let Some(content) = shared.get(&clean) {
+            return Ok(content.clone());
+        }
+        if let Some(content) = shared.get(path) {
+            return Ok(content.clone());
+        }
+        Err(format!("Shared file {} not found", path))
     }
 
     /// Returns the shared team directory as a nested folder/file tree.
@@ -179,4 +192,3 @@ impl MemoryManager {
         build_tree(&self.shared.lock().unwrap())
     }
 }
-

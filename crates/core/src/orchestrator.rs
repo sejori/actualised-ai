@@ -2,6 +2,7 @@ use crate::state::{CompanyState, Project};
 use crate::inference::{build_engine, InferenceConfig, InferenceEngine, InferenceResult, ToolCall};
 use crate::memory::MemoryManager;
 use crate::queue::{InferenceQueue, InferenceRequest, RateLimitConfig};
+use crate::vcs::WorkspaceProvider;
 use async_trait::async_trait;
 use petgraph::graph::DiGraph;
 use std::collections::{HashMap, HashSet};
@@ -89,6 +90,7 @@ pub struct Orchestrator {
     pub agent_contexts: HashMap<String, AgentContext>,
     pub tool_executor: Option<Arc<dyn ToolExecutor>>,
     pub inspection_trackers: HashMap<String, AgentInspectionTracker>,
+    pub workspace: Option<Arc<dyn WorkspaceProvider>>,
 }
 
 impl Orchestrator {
@@ -113,6 +115,7 @@ impl Orchestrator {
             agent_contexts: HashMap::new(),
             tool_executor: None,
             inspection_trackers: HashMap::new(),
+            workspace: None,
         }
     }
 
@@ -136,6 +139,10 @@ impl Orchestrator {
 
     pub fn set_tool_executor(&mut self, executor: Arc<dyn ToolExecutor>) {
         self.tool_executor = Some(executor);
+    }
+
+    pub fn set_workspace(&mut self, workspace: Arc<dyn WorkspaceProvider>) {
+        self.workspace = Some(workspace);
     }
 
     pub fn engine_for_agent(&self, agent: &crate::state::Agent) -> Arc<dyn InferenceEngine> {
@@ -273,7 +280,7 @@ impl Orchestrator {
             return None;
         }
         let is_root = self.state.agents.iter().any(|agent| agent.id == agent_id && agent.parent_id.is_none());
-        if !is_root {
+        if !is_root && call.name != "read_shared_file" && call.name != "write_shared_file" {
             return Some(Err("Root administration tools are restricted to the root agent".to_string()));
         }
 
@@ -330,7 +337,18 @@ impl Orchestrator {
                             )));
                         }
                         tracker.inspected_shared_files.insert(path.to_string());
-                        self.memory.read_shared(path)
+                        match self.memory.read_shared(path) {
+                            Ok(content) => Ok(content),
+                            Err(mem_err) => {
+                                if let Some(ref ws) = self.workspace {
+                                    ws.read_file(agent_id, path)
+                                        .await
+                                        .map_err(|e| format!("{} (and workspace: {})", mem_err, e))
+                                } else {
+                                    Err(mem_err)
+                                }
+                            }
+                        }
                     }
                     Err(e) => Err(e),
                 }
@@ -338,7 +356,16 @@ impl Orchestrator {
             "write_shared_file" => {
                 let path = call.args["path"].as_str().ok_or_else(|| "path is required".to_string());
                 let content = call.args["content"].as_str().ok_or_else(|| "content is required".to_string());
-                let res = path.and_then(|path| content.and_then(|content| self.memory.write_shared(path, content).map_err(|error| error.to_string()).map(|_| format!("Updated shared file {}", path))));
+                let res = match (path, content) {
+                    (Ok(path), Ok(content)) => {
+                        let mem_res = self.memory.write_shared(path, content).map_err(|error| error.to_string());
+                        if let Some(ref ws) = self.workspace {
+                            let _ = ws.write_file(agent_id, path, content, Some(&format!("Update shared file {}", path))).await;
+                        }
+                        mem_res.map(|_| format!("Updated shared file {}", path))
+                    }
+                    (Err(e), _) | (_, Err(e)) => Err(e),
+                };
                 if res.is_ok() {
                     self.reset_inspection_tracker(agent_id);
                 }
@@ -681,6 +708,68 @@ impl Orchestrator {
                                 if let Some(result) = self.execute_root_admin_tool(&agent_id, call).await {
                                     let message = result.unwrap_or_else(|error| format!("Tool {} failed: {}", call.name, error));
                                     let _ = self.queue_message(&agent_id, message).await;
+                                } else if call.name == "read_file" || call.name == "read_project_file" {
+                                    let path = call.args["path"].as_str().unwrap_or_default();
+                                    let tracker = self.inspection_trackers.entry(agent_id.clone()).or_default();
+                                    let msg = if tracker.inspected_shared_files.contains(path) {
+                                        format!(
+                                            "Repeat inspection of file '{}' is disallowed without an intervening action. You have already read this file; proceed with taking an action or assigning a task.",
+                                            path
+                                        )
+                                    } else {
+                                        tracker.inspected_shared_files.insert(path.to_string());
+                                        if let Some(ref ws) = self.workspace {
+                                            match ws.read_file(&agent_id, path).await {
+                                                Ok(content) => format!("File {} content:\n{}", path, content),
+                                                Err(e) => match self.memory.read_shared(path) {
+                                                    Ok(content) => format!("File {} content:\n{}", path, content),
+                                                    Err(_) => format!("Failed to read file: {}", e),
+                                                },
+                                            }
+                                        } else {
+                                            match self.memory.read_shared(path) {
+                                                Ok(content) => format!("File {} content:\n{}", path, content),
+                                                Err(_) => "No workspace provider configured and file not in memory.".to_string(),
+                                            }
+                                        }
+                                    };
+                                    let _ = self.queue_message(&agent_id, msg).await;
+                                } else if call.name == "write_file" || call.name == "write_project_file" {
+                                    let path = call.args["path"].as_str().unwrap_or_default();
+                                    let content = call.args["content"].as_str().unwrap_or_default();
+                                    let commit_msg = call.args.get("message")
+                                        .or_else(|| call.args.get("commit_message"))
+                                        .and_then(|v| v.as_str());
+                                    let msg = if let Some(ref ws) = self.workspace {
+                                        match ws.write_file(&agent_id, path, content, commit_msg).await {
+                                            Ok(_) => {
+                                                let _ = self.memory.write_shared(path, content);
+                                                self.reset_inspection_tracker(&agent_id);
+                                                format!("Successfully wrote and committed {}.", path)
+                                            }
+                                            Err(e) => format!("Failed to write file: {}", e),
+                                        }
+                                    } else {
+                                        match self.memory.write_shared(path, content) {
+                                            Ok(_) => {
+                                                self.reset_inspection_tracker(&agent_id);
+                                                format!("Successfully wrote {} to memory (no workspace attached).", path)
+                                            }
+                                            Err(e) => format!("Failed to write file to memory: {}", e),
+                                        }
+                                    };
+                                    let _ = self.queue_message(&agent_id, msg).await;
+                                } else if call.name == "list_files" || call.name == "list_directory" || call.name == "list_dir" {
+                                    let path = call.args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
+                                    let msg = if let Some(ref ws) = self.workspace {
+                                        match ws.list_directory(&agent_id, path).await {
+                                            Ok(files) => format!("Entries in '{}':\n{}", path, files.join("\n")),
+                                            Err(e) => format!("Failed to list directory: {}", e),
+                                        }
+                                    } else {
+                                        "No workspace provider configured.".to_string()
+                                    };
+                                    let _ = self.queue_message(&agent_id, msg).await;
                                 } else if call.name == "create_sub_project" {
                                     let title = call.args["title"].as_str().unwrap_or_default().to_string();
                                     let description = call.args["description"].as_str().unwrap_or_default().to_string();
@@ -1204,5 +1293,43 @@ mod tests {
         // Reset inspection tracker for root
         orchestrator.reset_inspection_tracker("root");
         assert!(!orchestrator.inspection_trackers.get("root").unwrap().inspected_tools.contains("inspect_company"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn orchestrator_workspace_read_write_and_fallback_tests() {
+        let temp_dir = std::env::temp_dir().join(format!("actualised_orch_ws_{}", uuid::Uuid::new_v4().simple()));
+        let ws = Arc::new(crate::vcs::LocalGitWorkspaceProvider::new_in_repo(&temp_dir).unwrap());
+
+        let mut orchestrator = orchestrator().await;
+        orchestrator.set_workspace(Arc::clone(&ws) as Arc<dyn WorkspaceProvider>);
+
+        // 1. Director writes shared file via execute_root_admin_tool -> syncs to both memory and workspace disk
+        let write_res = orchestrator.execute_root_admin_tool("root", &call("write_shared_file", json!({
+            "path": "res://specs/gdd.json",
+            "content": "{\"genre\": \"ARPG\"}"
+        }))).await.unwrap();
+        assert!(write_res.is_ok());
+
+        // Verify written to memory
+        assert_eq!(orchestrator.memory.read_shared("res://specs/gdd.json").unwrap(), "{\"genre\": \"ARPG\"}");
+        // Verify written to disk in git working tree (canonically stripped)
+        let disk_content = ws.read_file("root", "specs/gdd.json").await.unwrap();
+        assert_eq!(disk_content, "{\"genre\": \"ARPG\"}");
+
+        // 2. Direct write to workspace disk (not in memory) -> read_shared_file seamlessly falls back to workspace
+        ws.write_file("john", "specs/interface_contracts.json", "contracts content", None).await.unwrap();
+        let fallback_read = orchestrator.execute_root_admin_tool("root", &call("read_shared_file", json!({
+            "path": "specs/interface_contracts.json"
+        }))).await.unwrap();
+        assert_eq!(fallback_read.unwrap(), "contracts content");
+
+        // 3. Child agent calls read_shared_file
+        let child_read = orchestrator.execute_root_admin_tool("child", &call("read_shared_file", json!({
+            "path": "res://specs/gdd.json"
+        }))).await.unwrap();
+        assert_eq!(child_read.unwrap(), "{\"genre\": \"ARPG\"}");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

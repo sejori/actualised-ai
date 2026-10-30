@@ -251,6 +251,16 @@ impl DagGitCoordinator {
         Self::init_internal(path, None, Arc::new(DefaultWriteAuthorizer))
     }
 
+    pub fn new_in_repo_with_authorizer(
+        repo_path: impl Into<PathBuf>,
+        authorizer: Arc<dyn AgentWriteAuthorizer>,
+    ) -> Result<Arc<Self>, String> {
+        let path: PathBuf = repo_path.into();
+        std::fs::create_dir_all(&path)
+            .map_err(|e| format!("Failed to create repo dir {}: {}", path.display(), e))?;
+        Self::init_internal(path, None, authorizer)
+    }
+
     fn init_internal(
         git_repo_path: PathBuf,
         workspace_sync_path: Option<PathBuf>,
@@ -359,7 +369,7 @@ impl DagGitCoordinator {
         Ok(())
     }
 
-    fn run_git_raw(repo_path: &Path, args: &[&str]) -> Result<String, String> {
+    pub(crate) fn run_git_raw(repo_path: &Path, args: &[&str]) -> Result<String, String> {
         let output = Command::new("git")
             .current_dir(repo_path)
             .args(args)
@@ -381,7 +391,7 @@ impl DagGitCoordinator {
 
     /// Like `run_git_raw` but returns stdout byte-exact (no trimming), for reading file contents
     /// so trailing newlines survive read -> edit -> write round trips.
-    fn run_git_exact(repo_path: &Path, args: &[&str]) -> Result<String, String> {
+    pub(crate) fn run_git_exact(repo_path: &Path, args: &[&str]) -> Result<String, String> {
         let output = Command::new("git")
             .current_dir(repo_path)
             .args(args)
@@ -397,6 +407,25 @@ impl DagGitCoordinator {
                 String::from_utf8_lossy(&output.stderr).trim()
             ))
         }
+    }
+
+    /// Commits a file on the active working tree with the specified commit message.
+    pub async fn commit_file_on_working_tree(
+        &self,
+        clean_rel_path: &str,
+        message: &str,
+    ) -> Result<String, String> {
+        let _git_guard = self.git_mutex.lock().await;
+        Self::run_git_raw(&self.git_repo_path, &["add", clean_rel_path])?;
+        let status = Self::run_git_raw(&self.git_repo_path, &["status", "--porcelain"])?;
+        if status.is_empty() {
+            return Self::run_git_raw(&self.git_repo_path, &["rev-parse", "HEAD"]);
+        }
+        Self::run_git_raw(&self.git_repo_path, &["commit", "-m", message])?;
+        let new_sha = Self::run_git_raw(&self.git_repo_path, &["rev-parse", "HEAD"])?;
+        let mut st = self.state.lock().await;
+        st.stage3_base_commit = new_sha.clone();
+        Ok(new_sha)
     }
 
     /// Stage 1 (`PmScoping`): Parent agent (`jenny`) initializes the build's target feature branch (`feat/<slug>`).
@@ -1135,12 +1164,7 @@ impl DagGitCoordinator {
     }
 
     fn clean_rel_path(rel_path: &str) -> Result<String, String> {
-        let clean = rel_path
-            .replace('\\', "/")
-            .trim()
-            .trim_start_matches("res://")
-            .trim_start_matches('/')
-            .to_string();
+        let clean = super::workspace::normalize_canonical_path(rel_path);
         if clean.is_empty() || clean.contains("..") {
             return Err("Invalid or traversal file path".to_string());
         }

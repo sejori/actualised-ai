@@ -53,6 +53,8 @@ pub trait IssueTracker {
     async fn close_issue(&self, issue_id: &str) -> Result<(), VcsError>;
 }
 
-
 pub mod git_dag;
 pub use git_dag::*;
+
+pub mod workspace;
+pub use workspace::*;
