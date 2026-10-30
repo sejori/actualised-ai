@@ -56,6 +56,11 @@ pub trait WorkspaceProvider: Send + Sync {
 
     /// Lists entries in a directory relative to the workspace root.
     async fn list_directory(&self, agent_id: &str, path: &str) -> Result<Vec<String>, VcsError>;
+
+    /// Checks whether a file exists in the workspace.
+    async fn file_exists(&self, agent_id: &str, path: &str) -> bool {
+        self.read_file(agent_id, path).await.is_ok()
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -76,6 +81,11 @@ pub trait WorkspaceProvider {
 
     /// Lists entries in a directory relative to the workspace root.
     async fn list_directory(&self, agent_id: &str, path: &str) -> Result<Vec<String>, VcsError>;
+
+    /// Checks whether a file exists in the workspace.
+    async fn file_exists(&self, agent_id: &str, path: &str) -> bool {
+        self.read_file(agent_id, path).await.is_ok()
+    }
 }
 
 /// Local Git-backed workspace provider wrapping `DagGitCoordinator`.
@@ -280,6 +290,22 @@ impl WorkspaceProvider for LocalGitWorkspaceProvider {
 
         Err(VcsError(format!("Directory '{}' not found in workspace", clean)))
     }
+
+    async fn file_exists(&self, _agent_id: &str, path: &str) -> bool {
+        let clean = normalize_canonical_path(path);
+        if clean.contains("..") {
+            return false;
+        }
+        if self.coordinator.git_repo_path.join(&clean).is_file() {
+            return true;
+        }
+        if let Some(ref ws_root) = self.coordinator.workspace_sync_path {
+            if ws_root.join(&clean).is_file() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -450,6 +476,23 @@ mod tests {
         // Lead writing to system/ succeeds
         let res_lead = provider.write_file("lead", "res://system/core.json", "{}", None).await;
         assert!(res_lead.is_ok());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn test_local_git_workspace_file_exists() {
+        let temp_dir = std::env::temp_dir().join(format!("actualised_ws_test_{}", uuid::Uuid::new_v4().simple()));
+        let provider = LocalGitWorkspaceProvider::new_in_repo(&temp_dir).unwrap();
+
+        provider.write_file("agent", "res://scenes/level.tscn", "[gd_scene]", None).await.unwrap();
+
+        assert!(provider.file_exists("agent", "res://scenes/level.tscn").await);
+        assert!(provider.file_exists("agent", "scenes/level.tscn").await);
+        assert!(provider.file_exists("agent", "./scenes/level.tscn").await);
+        assert!(!provider.file_exists("agent", "res://scenes/missing.tscn").await);
+        assert!(!provider.file_exists("agent", "../escape.txt").await);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
