@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/sejori/actualised-ai/compare/sdk-v0.1.2...sdk-v0.1.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **security:** remove hardcoded fallback Doubleword API key from SDK examples ([be3234d](https://github.com/sejori/actualised-ai/commit/be3234dba8f0cd6743fbea78aa3c7072e13a7aed))
+
 ## [0.1.2](https://github.com/sejori/actualised-ai/compare/sdk-v0.1.1...sdk-v0.1.2) (2026-10-25)
 
 
