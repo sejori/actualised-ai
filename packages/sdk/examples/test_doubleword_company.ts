@@ -3,7 +3,10 @@ import { ActualisedClient } from '../src/index';
 async function runTestCompany() {
   console.log('=== Running Test Company with Doubleword DeepSeek-V4.1-Flash ===');
 
-  const apiKey = process.env.DOUBLEWORD_API_KEY || 'sk-U-5Q1NFbZaI7nsuSSmCqzqcn_AOQLe9wirAJUOQTZH0';
+  const apiKey = process.env.DOUBLEWORD_API_KEY;
+  if (!apiKey) {
+    throw new Error('DOUBLEWORD_API_KEY environment variable is required');
+  }
   const client = await ActualisedClient.create('mem://');
 
   console.log('Configuring company inference to Doubleword...');

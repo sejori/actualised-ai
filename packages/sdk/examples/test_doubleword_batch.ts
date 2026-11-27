@@ -3,7 +3,10 @@ import { ActualisedClient } from '../src/index';
 async function runBatchTestCompany() {
   console.log('=== Running Phase 2 Test Company with Doubleword Batch Processing ===');
 
-  const apiKey = process.env.DOUBLEWORD_API_KEY || 'sk-U-5Q1NFbZaI7nsuSSmCqzqcn_AOQLe9wirAJUOQTZH0';
+  const apiKey = process.env.DOUBLEWORD_API_KEY;
+  if (!apiKey) {
+    throw new Error('DOUBLEWORD_API_KEY environment variable is required');
+  }
   process.env.DOUBLEWORD_API_KEY = apiKey;
   const client = await ActualisedClient.create('mem://');
 
